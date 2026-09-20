@@ -166,7 +166,9 @@ test('отбитое кольцо покидает поле и удаляетс�
 
   // Отбитое кольцо должно уйти за кадр и исчезнуть из массива,
   // а не вернуться к центру и не копить объекты в поле.
-  // Новые кольца на этом отрезке не нужны: проверяем судьбу одного.
+  // Импульс сразу спавнит следующее — для этого теста оставляем только отбитое.
+  game.rings = game.rings.filter((item) => item.id === id);
+  game.fieldTarget = 0;
   game.nextSpawnSec = 1e9;
   run(game, 4);
 
@@ -193,7 +195,8 @@ test('отбитые кольца не накапливаются в поле', 
     maxAlive = Math.max(maxAlive, game.rings.length);
   }
 
-  assert.ok(maxAlive <= 4, `в поле скопилось ${maxAlive} колец`);
+  // До 5 угроз + несколько отлетающих после импульса.
+  assert.ok(maxAlive <= 8, `в поле скопилось ${maxAlive} колец`);
   assert.ok(
     game.rings.every((ring) => !ring.pushed || ring.radius < ESCAPE_REMOVE_RADIUS),
     'отбитые кольца не должны оставаться в поле',
@@ -323,11 +326,20 @@ test('обнуление энергии завершает партию', () => 
 });
 
 test('партия сама заканчивается, если игрок ничего не делает', () => {
-  const game = new PulseGame({ seed: 'afk' });
+  // Без микса рваных: на чистом plain кольца бьют гарантированно.
+  const game = new PulseGame({
+    seed: 'afk',
+    profile: {
+      name: 'afk',
+      jaggedTimeSec: 1e9,
+      magnetTimeSec: 1e9,
+      earlyGapMixChance: 0,
+    },
+  });
   game.start();
 
   // Без единого нажатия кольца доходят до центра, и энергия кончается.
-  run(game, 60);
+  run(game, 90);
 
   assert.equal(game.phase, PHASE.OVER, 'пассивный игрок обязан проиграть');
   assert.ok(game.player.hits > 0);
@@ -432,29 +444,103 @@ test('пройденные кольца удаляются и не копятс�
   for (const ring of game.rings) assert.ok(ring.radius > -0.1);
 });
 
-test('двойная сложность добавляет второе кольцо с отставанием', () => {
-  const game = new PulseGame({ seed: 'double', profile: { name: 'd', doubleTimeSec: 0, jaggedTimeSec: 1e9, magnetTimeSec: 1e9 } });
+test('двойных слоёв больше нет — спавн всегда одиночный', () => {
+  const game = new PulseGame({
+    seed: 'solo',
+    profile: { name: 's', jaggedTimeSec: 1e9, magnetTimeSec: 1e9, earlyGapMixChance: 0 },
+  });
   game.start();
+  game.fieldTarget = 1;
 
   game.spawn();
-
-  assert.equal(game.rings.length, 2);
-  const [first, second] = game.rings;
-  assert.equal(first.kind, RING_KIND.DOUBLE);
-  assert.equal(second.kind, RING_KIND.DOUBLE);
-  assert.ok(second.radius > first.radius, 'второй слой должен идти позади');
+  assert.equal(game.rings.length, 1);
+  assert.equal(game.rings[0].kind, RING_KIND.PLAIN);
 });
 
 test('на рваной и магнитной сложности появляются соответствующие кольца', () => {
-  const jagged = new PulseGame({ seed: 'j', profile: { name: 'j', doubleTimeSec: 0, jaggedTimeSec: 0, magnetTimeSec: 1e9 } });
+  const jagged = new PulseGame({
+    seed: 'j',
+    profile: { name: 'j', jaggedTimeSec: 0, magnetTimeSec: 1e9, jaggedPhaseChance: 1 },
+  });
   jagged.start();
+  jagged.rings = [];
   jagged.spawn();
   assert.equal(jagged.rings[0].kind, RING_KIND.JAGGED);
+  assert.ok(jagged.rings[0].gapAngle !== null);
 
-  const magnet = new PulseGame({ seed: 'm', profile: { name: 'm', doubleTimeSec: 0, jaggedTimeSec: 0, magnetTimeSec: 0 } });
+  const magnet = new PulseGame({ seed: 'm', profile: { name: 'm', jaggedTimeSec: 0, magnetTimeSec: 0 } });
   magnet.start();
+  magnet.rings = [];
   magnet.spawn();
   assert.equal(magnet.rings[0].kind, RING_KIND.MAGNET);
+  assert.equal(magnet.rings[0].gapAngle, null, 'магнит сплошной — не путать с рваным');
+});
+
+test('серия рваных в фазе jagged принудительно разбавляется целыми', () => {
+  const game = new PulseGame({
+    seed: 'streak',
+    profile: { name: 's', jaggedTimeSec: 0, magnetTimeSec: 1e9, jaggedPhaseChance: 1 },
+  });
+  game.start();
+  game.player.elapsedSec = 10;
+
+  const kinds = [];
+  for (let i = 0; i < 6; i += 1) {
+    game.rings = [];
+    game.spawn();
+    kinds.push(game.rings[0].kind);
+  }
+  assert.ok(kinds.includes(RING_KIND.PLAIN), `ожидали plain в серии: ${kinds.join(',')}`);
+  assert.ok(kinds.filter((k) => k === RING_KIND.PLAIN).length >= 2);
+});
+
+test('рваное кольцо у центра не наносит урон', () => {
+  const game = new PulseGame({ seed: 'safe-jagged' });
+  game.start();
+  game.rings = [];
+  game.spawn();
+  const ring = game.rings[0];
+  ring.kind = RING_KIND.JAGGED;
+  ring.gapAngle = Math.PI; // обод смотрит в игрока — раньше било бы
+  ring.radius = 0;
+  ring.resolved = false;
+
+  const before = game.player.energy;
+  game.resolveContacts();
+
+  assert.equal(game.player.energy, before);
+  assert.ok(game.player.cleanDodges >= 1);
+});
+
+test('на поле держится хотя бы одна угроза, цель 1…max от уровня', () => {
+  const game = new PulseGame({ seed: 'field-fill' });
+  game.start();
+
+  run(game, 2);
+  assert.ok(game.activeRings().length >= 1, 'экран не должен пустеть');
+  assert.ok(game.fieldTarget >= 1 && game.fieldTarget <= game.maxFieldRings);
+
+  game.player.elapsedSec = 90;
+  game.updateFieldTarget();
+  assert.equal(game.maxFieldRings, 5);
+  assert.ok(game.fieldTarget <= 5);
+});
+
+test('после импульса сразу появляется следующее кольцо с края', () => {
+  const game = new PulseGame({ seed: 'pulse-refill' });
+  game.start();
+  game.rings = [];
+  game.fieldTarget = 2;
+  game.spawn();
+  const first = game.rings[0];
+  first.radius = 0.3;
+
+  const beforeIds = new Set(game.rings.map((r) => r.id));
+  assert.equal(game.pulse(), true);
+
+  const newcomers = game.rings.filter((r) => !beforeIds.has(r.id) && !r.pushed);
+  assert.ok(newcomers.length >= 1, 'после импульса должно родиться новое кольцо');
+  assert.ok(newcomers.some((r) => Math.abs(r.radius - 1.5) < 1e-9));
 });
 
 test('партия с одним сидом воспроизводится шаг в шаг', () => {
@@ -559,8 +645,7 @@ test('ежедневный профиль всегда содержит все �
   for (let day = 0; day < 30; day += 1) {
     const profile = dailyProfile(Date.UTC(2026, 0, 1) + day * 86_400_000);
     assert.equal(typeof profile.name, 'string');
-    assert.ok(profile.doubleTimeSec > 0);
-    assert.ok(profile.jaggedTimeSec > profile.doubleTimeSec);
+    assert.ok(profile.jaggedTimeSec > 0);
     assert.ok(profile.magnetTimeSec > profile.jaggedTimeSec);
   }
 });

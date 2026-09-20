@@ -33,6 +33,66 @@ const PULSE_TINT_SEC = 0.2;
 const PULSE_TINT_COLOR = '#4FC3F7';
 /** Цвет точки при попадании кольца. */
 const HIT_TINT_COLOR = '#FF3B3B';
+/** RGB голубого импульса / полной оболочки. */
+const PULSE_RGB = Object.freeze({ r: 79, g: 195, b: 247 });
+/** RGB удара. */
+const HIT_RGB = Object.freeze({ r: 255, g: 59, b: 59 });
+
+/**
+ * @param {{r: number, g: number, b: number}} a
+ * @param {{r: number, g: number, b: number}} b
+ * @param {number} t
+ * @returns {{r: number, g: number, b: number}}
+ */
+function mixRgb(a, b, t) {
+  const u = Math.min(1, Math.max(0, t));
+  return {
+    r: Math.round(a.r + (b.r - a.r) * u),
+    g: Math.round(a.g + (b.g - a.g) * u),
+    b: Math.round(a.b + (b.b - a.b) * u),
+  };
+}
+
+/** @param {{r: number, g: number, b: number}} c */
+function cssRgb(c, a = 1) {
+  if (a >= 1) return `rgb(${c.r}, ${c.g}, ${c.b})`;
+  return `rgba(${c.r}, ${c.g}, ${c.b}, ${a})`;
+}
+
+/** Затемнить цвет для «низа» шара. */
+function shadeRgb(c, factor) {
+  return {
+    r: Math.round(c.r * factor),
+    g: Math.round(c.g * factor),
+    b: Math.round(c.b * factor),
+  };
+}
+
+/**
+ * Угроза для окраски точки.
+ * @param {Array<object>} rings
+ * @returns {{danger: number, safe: number}} danger 0…1 (plain/magnet), safe 0…1 (jagged в reach)
+ */
+function threatFromRings(rings) {
+  let danger = 0;
+  let safe = 0;
+  for (const ring of rings) {
+    if (ring.pushed) continue;
+    if (ring.radius > PULSE_REACH || ring.radius <= 0) continue;
+    // От 0 у границы reach до 1 у центра — плавное краснение.
+    const raw = 1 - ring.radius / PULSE_REACH;
+    const eased = Math.min(1, Math.max(0, Math.pow(raw, 0.85)));
+
+    if (ring.kind === RING_KIND.JAGGED) {
+      if (eased > safe) safe = eased;
+      continue;
+    }
+    if (ring.kind === RING_KIND.PLAIN || ring.kind === RING_KIND.MAGNET) {
+      if (eased > danger) danger = eased;
+    }
+  }
+  return { danger, safe };
+}
 
 /**
  * Частица из пула. Создаётся один раз, дальше только переиспользуется.
@@ -226,26 +286,12 @@ export class Renderer {
     // кадр показалось бы целым рядом с собственным взрывом.
     const gone = new Set(bursts.map((item) => item.id));
 
-    this.drawPulseReach(ctx, fg);
     this.drawRings(ctx, state.rings, fg, gone);
     this.drawEchoes(ctx, dt, fg);
     this.drawParticles(ctx, dt, fg);
     this.drawPlayer(ctx, state, fg);
 
     for (const burst of bursts) this.shatterRing(burst);
-  }
-
-  /** Едва заметная граница зоны импульса: подсказывает, что дальние кольца не оттолкнуть. */
-  drawPulseReach(ctx, fg) {
-    const radius = PULSE_REACH * this.scale;
-    ctx.save();
-    ctx.globalAlpha = 0.07;
-    ctx.strokeStyle = fg;
-    ctx.lineWidth = Math.max(1, 1 * this.dpr);
-    ctx.beginPath();
-    ctx.arc(this.cx, this.cy, radius, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.restore();
   }
 
   /** Кольца: сплошные, рваные (разрыв) и магнитные (тянущая пунктирная дуга). */
@@ -341,8 +387,9 @@ export class Renderer {
       this.drawGapEdges(ctx, ring, screenRadius, thickness, fg);
     }
 
-    if (ring.kind === RING_KIND.MAGNET && ring.pulling) {
-      this.drawMagnetHint(ctx, screenRadius, thickness, fg);
+    if (ring.kind === RING_KIND.MAGNET) {
+      // Пунктир всегда: magnet без разрыва, иначе его не отличить от plain.
+      this.drawMagnetHint(ctx, screenRadius, thickness, fg, ring.pulling);
     }
   }
 
@@ -363,12 +410,15 @@ export class Renderer {
     ctx.restore();
   }
 
-  /** Пунктир внутри магнитного кольца: показывает, что оно потянет к центру. */
-  drawMagnetHint(ctx, screenRadius, thickness, fg) {
+  /**
+   * Пунктир внутри магнитного кольца: показывает, что оно потянет к центру.
+   * @param {boolean} [pulling] в зоне тяги — ярче
+   */
+  drawMagnetHint(ctx, screenRadius, thickness, fg, pulling = false) {
     const inner = Math.max(0, screenRadius - thickness * 3);
     ctx.save();
-    ctx.globalAlpha = 0.35;
-    ctx.lineWidth = thickness * 0.7;
+    ctx.globalAlpha = pulling ? 0.55 : 0.28;
+    ctx.lineWidth = thickness * (pulling ? 0.9 : 0.7);
     ctx.setLineDash([screenRadius * 0.06, screenRadius * 0.09]);
     ctx.beginPath();
     ctx.arc(this.cx, this.cy, inner, 0, Math.PI * 2);
@@ -440,32 +490,135 @@ export class Renderer {
     ctx.restore();
   }
 
-  /** Точка игрока: свечение, тело и пульсация в такт «сердцу». */
+  /** Точка игрока: объёмный шар с бликом, оболочка энергии, сигналы угрозы. */
   drawPlayer(ctx, state, fg) {
-    const beat = this.reducedMotion ? 1 : 1 + Math.sin(this.heartbeat * Math.PI * 2) * 0.08;
-    const base = Math.max(4, 6 * this.dpr) * beat;
+    const beat = this.reducedMotion ? 1 : 1 + Math.sin(this.heartbeat * Math.PI * 2) * 0.06;
+    const base = Math.max(5, 7 * this.dpr) * beat;
     const alpha = state.invulnerable ? 0.45 : 1;
-    // Удар важнее импульса: при одновременных вспышках остаётся красный.
-    const color = this.hitTintSec > 0
-      ? HIT_TINT_COLOR
-      : this.pulseTintSec > 0
-        ? PULSE_TINT_COLOR
-        : fg;
+    const energy = Math.min(1, Math.max(0, state.energyRatio ?? 1));
+    const { danger, safe } = threatFromRings(state.rings || []);
+    const white = { r: 255, g: 255, b: 255 };
+    const silver = { r: 210, g: 220, b: 230 };
 
-    // Свечение: несколько концентрических кругов с малой альфой.
-    ctx.save();
-    ctx.fillStyle = color;
-    for (let pass = 4; pass >= 1; pass -= 1) {
-      ctx.globalAlpha = alpha * 0.05 * pass;
-      ctx.beginPath();
-      ctx.arc(this.cx, this.cy, base * (1 + pass * 0.9), 0, Math.PI * 2);
-      ctx.fill();
+    // Базовый цвет ядра: удар > импульс > опасность > рваное > белый/серебро.
+    let core = mixRgb(white, silver, 0.2);
+    if (this.hitTintSec > 0) {
+      core = HIT_RGB;
+    } else if (this.pulseTintSec > 0) {
+      core = { ...PULSE_RGB };
+    } else if (danger > 0) {
+      core = mixRgb(white, HIT_RGB, danger);
+    } else if (safe > 0) {
+      core = mixRgb(white, PULSE_RGB, safe * 0.45);
     }
 
-    ctx.globalAlpha = alpha;
+    // Блик медленно «перетекает» по сфере.
+    const shimmer = this.reducedMotion ? 0 : this.heartbeat * Math.PI * 2;
+    const hx = Math.cos(shimmer) * base * 0.32;
+    const hy = Math.sin(shimmer * 0.85) * base * 0.28 - base * 0.12;
+
+    ctx.save();
+
+    // Мягкое свечение вокруг шара.
+    const glow = ctx.createRadialGradient(this.cx, this.cy, base * 0.2, this.cx, this.cy, base * 3.2);
+    glow.addColorStop(0, cssRgb(core, alpha * 0.28));
+    glow.addColorStop(0.45, cssRgb(core, alpha * 0.08));
+    glow.addColorStop(1, cssRgb(core, 0));
+    ctx.fillStyle = glow;
+    ctx.beginPath();
+    ctx.arc(this.cx, this.cy, base * 3.2, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Оболочка энергии.
+    const shellRadius = base * (1.55 + energy * 1.35);
+    const shellWidth = Math.max(1, (1.2 + energy * 2.2) * this.dpr);
+    let shellCalm = white;
+    let shellAlpha;
+    if (energy < 0.25) {
+      shellCalm = white;
+      shellAlpha = alpha * (0.22 + energy * 0.8);
+    } else {
+      const blueT = (energy - 0.25) / 0.75;
+      shellCalm = mixRgb(white, PULSE_RGB, 0.35 + blueT * 0.65);
+      shellAlpha = alpha * (0.35 + energy * 0.45);
+    }
+    let shellColor = cssRgb(shellCalm);
+    if (danger > 0 && this.hitTintSec <= 0 && this.pulseTintSec <= 0) {
+      shellColor = cssRgb(mixRgb(shellCalm, HIT_RGB, danger));
+      shellAlpha = Math.min(1, shellAlpha + danger * 0.3);
+    } else if (energy < 0.25) {
+      shellColor = fg;
+    }
+    ctx.globalAlpha = shellAlpha;
+    ctx.strokeStyle = shellColor;
+    ctx.lineWidth = shellWidth;
+    ctx.beginPath();
+    ctx.arc(this.cx, this.cy, shellRadius, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // Объёмное тело: градиент от блика к тёмному краю.
+    const body = ctx.createRadialGradient(
+      this.cx + hx,
+      this.cy + hy,
+      base * 0.05,
+      this.cx,
+      this.cy,
+      base,
+    );
+    const hi = mixRgb(white, core, 0.15);
+    const mid = core;
+    const lo = shadeRgb(mixRgb(core, { r: 20, g: 24, b: 28 }, 0.35), 0.55);
+    body.addColorStop(0, cssRgb(hi, alpha));
+    body.addColorStop(0.45, cssRgb(mid, alpha));
+    body.addColorStop(1, cssRgb(lo, alpha));
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = body;
     ctx.beginPath();
     ctx.arc(this.cx, this.cy, base, 0, Math.PI * 2);
     ctx.fill();
+
+    // Спекулярный блик — маленькое «стеклянное» пятно.
+    const specR = base * 0.42;
+    const spec = ctx.createRadialGradient(
+      this.cx + hx * 1.1,
+      this.cy + hy * 1.1,
+      0,
+      this.cx + hx * 1.1,
+      this.cy + hy * 1.1,
+      specR,
+    );
+    spec.addColorStop(0, `rgba(255, 255, 255, ${alpha * 0.9})`);
+    spec.addColorStop(0.35, `rgba(255, 255, 255, ${alpha * 0.35})`);
+    spec.addColorStop(1, 'rgba(255, 255, 255, 0)');
+    ctx.fillStyle = spec;
+    ctx.beginPath();
+    ctx.arc(this.cx + hx * 1.1, this.cy + hy * 1.1, specR, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Холодный обод снизу-справа — лёгкий серебристый перелив.
+    if (!this.reducedMotion || danger <= 0) {
+      const rim = ctx.createRadialGradient(
+        this.cx - hx * 0.6,
+        this.cy - hy * 0.4,
+        base * 0.3,
+        this.cx,
+        this.cy,
+        base,
+      );
+      const rimTint =
+        this.pulseTintSec > 0
+          ? PULSE_RGB
+          : danger > 0
+            ? mixRgb(silver, HIT_RGB, danger * 0.6)
+            : mixRgb(silver, PULSE_RGB, 0.25 + energy * 0.35);
+      rim.addColorStop(0, 'rgba(0,0,0,0)');
+      rim.addColorStop(0.7, cssRgb(rimTint, alpha * 0.12));
+      rim.addColorStop(1, cssRgb(rimTint, alpha * 0.35));
+      ctx.fillStyle = rim;
+      ctx.beginPath();
+      ctx.arc(this.cx, this.cy, base, 0, Math.PI * 2);
+      ctx.fill();
+    }
 
     // Разрыв смотрит в центр: тонкое кольцо-подсказка «можно не жать».
     if (state.gapAligned && !this.reducedMotion) {
@@ -473,17 +626,17 @@ export class Renderer {
       ctx.strokeStyle = PULSE_TINT_COLOR;
       ctx.lineWidth = Math.max(1, 1.5 * this.dpr);
       ctx.beginPath();
-      ctx.arc(this.cx, this.cy, base * 1.85, 0, Math.PI * 2);
+      ctx.arc(this.cx, this.cy, Math.max(shellRadius * 1.08, base * 1.85), 0, Math.PI * 2);
       ctx.stroke();
     }
 
-    // Кольцо прицела при высокой точности: маленькая метка внутри точки.
+    // Кольцо прицела при высокой точности.
     if (state.multiplier >= 2 && !this.reducedMotion) {
-      ctx.globalAlpha = alpha * 0.55;
-      ctx.strokeStyle = color === fg ? '#000000' : fg;
+      ctx.globalAlpha = alpha * 0.5;
+      ctx.strokeStyle = this.hitTintSec > 0 || this.pulseTintSec > 0 ? fg : 'rgba(0,0,0,0.55)';
       ctx.lineWidth = Math.max(1, 1.5 * this.dpr);
       ctx.beginPath();
-      ctx.arc(this.cx, this.cy, base * 0.4, 0, Math.PI * 2);
+      ctx.arc(this.cx, this.cy, base * 0.38, 0, Math.PI * 2);
       ctx.stroke();
     }
     ctx.restore();

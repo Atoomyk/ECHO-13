@@ -11,7 +11,9 @@ import {
   CRUSH_RADIUS,
   DAILY_PROFILES,
   ESCAPE_REMOVE_RADIUS,
+  FIELD_RINGS_MAX,
   MAX_FRAME_SEC,
+  MIN_RING_GAP,
   PLAYER_RADIUS,
   PULSE_REACH,
   SPAWN_INTERVAL_JITTER_MAX,
@@ -19,6 +21,7 @@ import {
   SPAWN_INTERVAL_MIN_SEC,
   SPAWN_INTERVAL_START_SEC,
   SPAWN_INTERVAL_STEP_SEC,
+  SPAWN_RADIUS,
 } from './constants.js';
 import { Player } from './player.js';
 import { createRing, RING_KIND } from './ring.js';
@@ -38,13 +41,9 @@ export const PHASE = Object.freeze({
 /** Пресет по умолчанию: свободная игра без общего сида. */
 export const DEFAULT_PROFILE = Object.freeze({
   name: 'СВОБОДНАЯ',
-  doubleTimeSec: 60,
-  jaggedTimeSec: 90,
-  magnetTimeSec: 120,
+  jaggedTimeSec: 55,
+  magnetTimeSec: 100,
 });
-
-/** Отставание второго слоя двойного кольца, в секундах. */
-const DOUBLE_STAGGER_SEC = 0.55;
 
 /** Игрок всегда стоит в центре; его угол задаёт только геометрию разрыва. */
 const PLAYER_ANGLE = 0;
@@ -53,7 +52,7 @@ const PLAYER_ANGLE = 0;
  * Профиль ежедневного челленджа: ровно один на календарный день UTC.
  * Все игроки получают одинаковые пороги сложности, поэтому сравнение честное.
  * @param {number} [timestampMs]
- * @returns {{name: string, doubleTimeSec: number, jaggedTimeSec: number, magnetTimeSec: number}}
+ * @returns {{name: string, jaggedTimeSec: number, magnetTimeSec: number}}
  */
 export function dailyProfile(timestampMs = Date.now()) {
   return DAILY_PROFILES[dayIndex(timestampMs) % DAILY_PROFILES.length];
@@ -78,6 +77,11 @@ export class PulseGame {
     this.phase = PHASE.READY;
     this.spawnIndex = 0;
     this.nextSpawnSec = 0;
+    /** Сколько угроз держим на поле (1…max); перебрасывается при пустом поле и смене LV. */
+    this.fieldTarget = 1;
+    this.targetLevel = 1;
+    /** Подряд идущие jagged — чтобы не забить поле одними дырками. */
+    this.jaggedStreak = 0;
     /** События шага: рендер и звук читают их, само ядро ничего не рисует. */
     this.events = [];
     /** Время, ещё не отыгранное целым шагом. */
@@ -102,12 +106,10 @@ export class PulseGame {
 
   /**
    * Пауза до следующего спавна: база × разброс от сида.
-   * Так волны идут не метрономом, а сериями с передышками.
    * @returns {number}
    */
   rollSpawnDelay() {
     const factor = rangeBetween(this.random, SPAWN_INTERVAL_JITTER_MIN, SPAWN_INTERVAL_JITTER_MAX);
-    // Ниже половины минимума не опускаемся: иначе кольца слипаются на входе.
     const floor = SPAWN_INTERVAL_MIN_SEC * 0.55;
     return Math.max(floor, this.spawnIntervalSec * factor);
   }
@@ -122,13 +124,41 @@ export class PulseGame {
     return Math.floor(this.elapsedSec / 30) + 1;
   }
 
+  /** Верхняя граница числа угроз на поле: LV1→2 … LV4+→5. */
+  get maxFieldRings() {
+    return Math.min(FIELD_RINGS_MAX, this.level + 1);
+  }
+
+  /** Живые угрозы (отбитые улетают отдельно и не считаются). */
+  activeRings() {
+    return this.rings.filter((ring) => !ring.pushed);
+  }
+
+  /** Случайная цель заполнения поля: целое от 1 до maxFieldRings. */
+  rollFieldTarget() {
+    const max = this.maxFieldRings;
+    return Math.min(max, Math.floor(rangeBetween(this.random, 1, max + 1)));
+  }
+
+  /**
+   * Можно ли добавить кольцо с края: есть слот и внешнее уже ушло внутрь на MIN_RING_GAP.
+   * @returns {boolean}
+   */
+  canSpawnRing() {
+    const active = this.activeRings();
+    if (active.length >= this.fieldTarget) return false;
+    if (active.length === 0) return true;
+    const outer = Math.max(...active.map((ring) => ring.radius));
+    return outer <= SPAWN_RADIUS - MIN_RING_GAP;
+  }
+
   /** Сложность, достигнутая за партию — для HUD и для эмодзи-сетки. */
   get difficulty() {
     return {
       level: this.level,
       speed: this.speedScale,
       spawnIntervalSec: this.spawnIntervalSec,
-      double: this.profile.doubleTimeSec,
+      fieldTarget: this.fieldTarget,
       jagged: this.profile.jaggedTimeSec,
       magnet: this.profile.magnetTimeSec,
     };
@@ -141,6 +171,9 @@ export class PulseGame {
     this.rings = [];
     this.spawnIndex = 0;
     this.nextSpawnSec = 0;
+    this.targetLevel = 1;
+    this.fieldTarget = this.rollFieldTarget();
+    this.jaggedStreak = 0;
     this.accumulatorSec = 0;
     this.events = [];
     this.phase = PHASE.PLAYING;
@@ -198,6 +231,15 @@ export class PulseGame {
       energy: this.player.energy,
       multiplier: this.player.multiplier,
     });
+
+    // Сразу следующее с края после отбоя — даже если слоты ещё «плотные».
+    this.nextSpawnSec = 0;
+    if (pushed > 0 && this.activeRings().length < FIELD_RINGS_MAX) {
+      this.spawn();
+      this.nextSpawnSec = this.rollSpawnDelay();
+    } else if (this.activeRings().length === 0) {
+      this.refillField(1);
+    }
     return true;
   }
 
@@ -240,11 +282,9 @@ export class PulseGame {
 
     for (const ring of this.rings) ring.update(dt);
 
+    this.updateFieldTarget();
     this.nextSpawnSec -= dt;
-    if (this.nextSpawnSec <= 0) {
-      this.spawn();
-      this.nextSpawnSec = this.rollSpawnDelay();
-    }
+    this.refillField();
 
     this.resolveContacts();
 
@@ -254,10 +294,43 @@ export class PulseGame {
       if (ring.pushed) return ring.radius < ESCAPE_REMOVE_RADIUS;
       return ring.radius > -0.08;
     });
+
+    // После удаления crush/escape снова добираем поле — экран не пустеет.
+    if (this.activeRings().length === 0 && this.phase === PHASE.PLAYING) {
+      this.nextSpawnSec = 0;
+      this.refillField(1);
+    }
   }
 
-  /** Добавить очередное кольцо — и второй слой, если сложность уже двойная. */
+  /** При смене LV перебрасываем цель заполнения под новый потолок. */
+  updateFieldTarget() {
+    if (this.level === this.targetLevel) return;
+    this.targetLevel = this.level;
+    this.fieldTarget = this.rollFieldTarget();
+  }
+
+  /**
+   * Добить поле до цели / гарантировать ≥1 угрозу.
+   * @param {number} [maxSpawns] лимит за вызов (после импульса — одно)
+   */
+  refillField(maxSpawns = FIELD_RINGS_MAX) {
+    let spawned = 0;
+    while (spawned < maxSpawns && this.canSpawnRing()) {
+      const active = this.activeRings().length;
+      // Пустое поле — всегда сразу; иначе ждём интервал (ритм с джиттером).
+      if (active > 0 && this.nextSpawnSec > 0) break;
+      this.spawn();
+      spawned += 1;
+      this.nextSpawnSec = this.rollSpawnDelay();
+    }
+  }
+
+  /** Добавить одно одиночное кольцо с края. */
   spawn() {
+    if (this.activeRings().length === 0) {
+      this.fieldTarget = this.rollFieldTarget();
+    }
+
     const ring = createRing({
       random: this.random,
       index: this.spawnIndex,
@@ -266,30 +339,27 @@ export class PulseGame {
       profile: this.profile,
     });
 
-    this.rings.push(ring);
-
-    if (ring.kind === RING_KIND.DOUBLE) {
-      const partner = createRing({
-        random: this.random,
-        index: this.spawnIndex + 15,
-        elapsedSec: this.elapsedSec,
-        speedScale: this.speedScale,
-        profile: this.profile,
-      });
-      // Второй слой отстаёт по радиусу, но сохраняет собственный разрыв:
-      // два разрыва подряд не должны открывать бесплатный коридор.
-      partner.radius = ring.radius + ring.speed * DOUBLE_STAGGER_SEC;
-      partner.kind = RING_KIND.DOUBLE;
-      partner.gapAngle = ring.gapAngle === null ? null : ring.gapAngle + Math.PI / 2;
-      partner.spin = ring.spin;
-      this.rings.push(partner);
+    // В фазе jagged не даём серии из 3+ рваных подряд — иначе на поле остаются одни дырки.
+    const inJaggedPhase =
+      this.elapsedSec >= this.profile.jaggedTimeSec &&
+      this.elapsedSec < this.profile.magnetTimeSec;
+    if (inJaggedPhase && ring.kind === RING_KIND.JAGGED && this.jaggedStreak >= 2) {
+      ring.kind = RING_KIND.PLAIN;
+      ring.gapAngle = null;
+      ring.spin = 0;
+      this.jaggedStreak = 0;
+    } else if (ring.kind === RING_KIND.JAGGED) {
+      this.jaggedStreak += 1;
+    } else {
+      this.jaggedStreak = 0;
     }
 
+    this.rings.push(ring);
     this.spawnIndex += 1;
     this.events.push({ type: 'spawn', kind: ring.kind, id: ring.id });
   }
 
-  /** Разобраться с кольцами, дошедшими до центра: пролёт сквозь разрыв или удар. */
+  /** Разобраться с кольцами у центра: рваные всегда безопасны, plain бьёт. */
   resolveContacts() {
     for (const ring of this.rings) {
       // Каждое кольцо обрабатывается ровно один раз: без метки оно успевало
@@ -298,7 +368,8 @@ export class PulseGame {
       if (ring.radius > CRUSH_RADIUS) continue;
 
       ring.resolved = true;
-      const throughGap = ring.isCleanPass(PLAYER_ANGLE);
+      // Рваное никогда не ранит — даже при «попадании в обод».
+      const throughGap = ring.kind === RING_KIND.JAGGED || ring.isCleanPass(PLAYER_ANGLE);
       const result = this.player.resolvePass(throughGap);
 
       if (result === 'clean') {
@@ -309,6 +380,19 @@ export class PulseGame {
     }
 
     if (!this.player.alive) this.finish();
+  }
+
+  /**
+   * Разрыв ближайшего рваного кольца смотрит в центр — подсказка для новичка.
+   * @returns {boolean}
+   */
+  get gapAligned() {
+    for (const ring of this.rings) {
+      if (ring.gapAngle === null) continue;
+      if (ring.radius > PULSE_REACH * 1.5) continue;
+      return ring.isCleanPass(PLAYER_ANGLE);
+    }
+    return false;
   }
 
   /** Партия окончена: энергия кончилась. */
@@ -326,19 +410,6 @@ export class PulseGame {
       cleanDodges: this.player.cleanDodges,
       elapsedSec: this.elapsedSec,
     });
-  }
-
-  /**
-   * Разрыв ближайшего рваного кольца смотрит в центр — подсказка для новичка.
-   * @returns {boolean}
-   */
-  get gapAligned() {
-    for (const ring of this.rings) {
-      if (ring.gapAngle === null) continue;
-      if (ring.radius > PULSE_REACH * 1.5) continue;
-      return ring.isCleanPass(PLAYER_ANGLE);
-    }
-    return false;
   }
 
   /**

@@ -196,13 +196,13 @@ function handleEvents(events) {
     switch (event.type) {
       case 'pulse':
         renderer.echo();
-        renderer.tintPulse();
-        sound.pulse(event.pushed);
-        // Отбитое кольцо не улетает, а взрывается осколками на месте.
+        // Голубая вспышка и «сброс в белый» только если кольцо реально отбито.
         if (event.pushed > 0) {
+          renderer.tintPulse();
           bursts.push(...event.burst);
           sound.shatter(event.pushed);
         }
+        sound.pulse(event.pushed);
         break;
       case 'weak':
         sound.weak();

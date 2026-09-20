@@ -83,7 +83,7 @@ try {
     const daily = await request('/api/daily');
     const dailyBody = await daily.json();
     check('GET /api/daily отдаёт сид', typeof dailyBody.seed === 'string' && dailyBody.seed.startsWith('pulse-'));
-    check('профиль дня содержит пороги', typeof dailyBody.profile?.doubleTimeSec === 'number');
+    check('профиль дня содержит пороги', typeof dailyBody.profile?.jaggedTimeSec === 'number');
 
     const index = await request('/');
     const html = await index.text();

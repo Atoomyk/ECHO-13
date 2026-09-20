@@ -10,12 +10,18 @@ import {
   BASE_ESCAPE_SPEED,
   CLEAN_WINDOW_RAD,
   DANGER_RADIUS,
+  EARLY_GAP_MIX_CHANCE,
+  EARLY_GAP_MIX_SEC,
   GAP_AIM_LEAD_SEC,
   GAP_SPAN,
   GAP_SPIN_PER_SEC,
+  JAGGED_PHASE_CHANCE,
   RING_THICKNESS_FAR,
   RING_THICKNESS_NEAR,
   SPAWN_RADIUS,
+  TRAVEL_JITTER_MAX,
+  TRAVEL_JITTER_MIN,
+  TRAVEL_LEVEL_SEC,
   TRAVEL_MIN_SEC,
   TRAVEL_START_SEC,
   TRAVEL_STEP_SEC,
@@ -25,7 +31,6 @@ import { rangeBetween } from './random.js';
 /** Типы колец: включаются по мере роста сложности. */
 export const RING_KIND = Object.freeze({
   PLAIN: 'plain',
-  DOUBLE: 'double',
   JAGGED: 'jagged',
   MAGNET: 'magnet',
 });
@@ -64,14 +69,14 @@ export function angleDistance(a, b) {
 }
 
 /**
- * Длительность полёта кольца от края до центра для его номера.
- * Скорость растёт ступенями: каждые четыре кольца — на шаг быстрее, до предела.
- * @param {number} index порядковый номер кольца, начиная с 0
+ * Длительность полёта кольца от края до центра по времени партии.
+ * Ступени совпадают с LV (каждые TRAVEL_LEVEL_SEC): клики не разгоняют очередь.
+ * @param {number} elapsedSec секунды с начала партии
  * @returns {number} секунд
  */
-export function travelSecondsFor(index) {
-  const safe = Math.max(0, Math.floor(index) || 0);
-  const step = Math.floor(safe / 4);
+export function travelSecondsFor(elapsedSec) {
+  const safe = Math.max(0, Number(elapsedSec) || 0);
+  const step = Math.floor(safe / TRAVEL_LEVEL_SEC);
   return Math.max(TRAVEL_MIN_SEC, TRAVEL_START_SEC - step * TRAVEL_STEP_SEC);
 }
 
@@ -208,13 +213,32 @@ export class Ring {
 /**
  * Какой тип кольца положен на этой секунде партии.
  * @param {number} elapsedSec
- * @param {{doubleTimeSec: number, jaggedTimeSec: number, magnetTimeSec: number}} profile
+ * @param {{jaggedTimeSec: number, magnetTimeSec: number, earlyGapMixChance?: number, jaggedPhaseChance?: number}} profile
+ * @param {(() => number)|null} [random] seeded PRNG; без него миксы не бросаются
  * @returns {string}
  */
-export function pickKind(elapsedSec, profile) {
+export function pickKind(elapsedSec, profile, random = null) {
   if (elapsedSec >= profile.magnetTimeSec) return RING_KIND.MAGNET;
-  if (elapsedSec >= profile.jaggedTimeSec) return RING_KIND.JAGGED;
-  if (elapsedSec >= profile.doubleTimeSec) return RING_KIND.DOUBLE;
+
+  if (elapsedSec >= profile.jaggedTimeSec) {
+    // Фаза jagged: микс рваных и целых, не 100% дырок.
+    const chance =
+      typeof profile.jaggedPhaseChance === 'number'
+        ? profile.jaggedPhaseChance
+        : JAGGED_PHASE_CHANCE;
+    if (!random) return RING_KIND.JAGGED;
+    return random() < chance ? RING_KIND.JAGGED : RING_KIND.PLAIN;
+  }
+
+  // Лёгкий микс: часть plain заменяем на jagged до порога jaggedTimeSec.
+  const mixChance =
+    typeof profile.earlyGapMixChance === 'number'
+      ? profile.earlyGapMixChance
+      : EARLY_GAP_MIX_CHANCE;
+  const mixFrom = Math.min(EARLY_GAP_MIX_SEC, profile.jaggedTimeSec * 0.45);
+  if (mixChance > 0 && random && elapsedSec >= mixFrom && random() < mixChance) {
+    return RING_KIND.JAGGED;
+  }
   return RING_KIND.PLAIN;
 }
 
@@ -248,19 +272,19 @@ export function aimGapAtPlayer(radius, speed, spin, playerAngle, leadSec) {
  * @param {number} options.index порядковый номер кольца
  * @param {number} options.elapsedSec сколько секунд идёт партия
  * @param {number} options.speedScale общий ускоритель прогрессии
- * @param {{doubleTimeSec: number, jaggedTimeSec: number, magnetTimeSec: number}} options.profile
+ * @param {{jaggedTimeSec: number, magnetTimeSec: number}} options.profile
  * @returns {Ring}
  */
 export function createRing({ random, index, elapsedSec, speedScale, profile }) {
-  // Скорость кольца сильно плавает вокруг расписания: ±30% от сида.
-  // Без этого разброса кольца подъезжали бы ровной колонной.
-  const baseTravel = travelSecondsFor(index) / Math.max(0.2, speedScale);
-  const jitter = rangeBetween(random, 0.7, 1.3);
+  // База от времени/LV (+ speedScale), не от index — импульсы не разгоняют очередь.
+  const baseTravel = travelSecondsFor(elapsedSec) / Math.max(0.2, speedScale);
+  const jitter = rangeBetween(random, TRAVEL_JITTER_MIN, TRAVEL_JITTER_MAX);
   const travel = baseTravel * jitter;
   const speed = SPAWN_RADIUS / travel;
-  const kind = pickKind(elapsedSec, profile);
+  const kind = pickKind(elapsedSec, profile, random);
 
-  const hasGap = kind !== RING_KIND.PLAIN;
+  // Разрыв только у jagged. Magnet — сплошной, но тянет (визуально другой тип).
+  const hasGap = kind === RING_KIND.JAGGED;
   const spinDir = random() < 0.5 ? -1 : 1;
   const spin = hasGap ? rangeBetween(random, 0.7, 1.4) * GAP_SPIN_PER_SEC * spinDir : 0;
 

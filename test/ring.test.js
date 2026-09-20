@@ -23,7 +23,7 @@ import {
   TRAVEL_START_SEC,
 } from '../src/core/constants.js';
 
-const PROFILE = { name: 'test', doubleTimeSec: 60, jaggedTimeSec: 90, magnetTimeSec: 120 };
+const PROFILE = { name: 'test', jaggedTimeSec: 90, magnetTimeSec: 120 };
 
 test('нормализация угла приводит любые значения в [0, 2π)', () => {
   assert.equal(normalizeAngle(0), 0);
@@ -39,10 +39,10 @@ test('угловая разница считается по короткой д�
   assert.equal(angleDistance(1, 1), 0);
 });
 
-test('скорость кольца растёт ступенями и упирается в предел', () => {
+test('скорость кольца растёт по времени партии и упирается в предел', () => {
   assert.equal(travelSecondsFor(0), TRAVEL_START_SEC);
-  assert.equal(travelSecondsFor(3), TRAVEL_START_SEC);
-  assert.ok(travelSecondsFor(4) < TRAVEL_START_SEC);
+  assert.equal(travelSecondsFor(29.9), TRAVEL_START_SEC);
+  assert.ok(travelSecondsFor(30) < TRAVEL_START_SEC);
   assert.equal(travelSecondsFor(1000), TRAVEL_MIN_SEC);
 });
 
@@ -204,11 +204,27 @@ test('повторный импульс по тому же кольцу ниче
 
 test('тип кольца включается по времени партии', () => {
   assert.equal(pickKind(0, PROFILE), RING_KIND.PLAIN);
-  assert.equal(pickKind(59.9, PROFILE), RING_KIND.PLAIN);
-  assert.equal(pickKind(60, PROFILE), RING_KIND.DOUBLE);
+  assert.equal(pickKind(89.9, PROFILE), RING_KIND.PLAIN);
   assert.equal(pickKind(90, PROFILE), RING_KIND.JAGGED);
   assert.equal(pickKind(120, PROFILE), RING_KIND.MAGNET);
   assert.equal(pickKind(999, PROFILE), RING_KIND.MAGNET);
+});
+
+test('ранний микс рваных включается только с PRNG и до jagged', () => {
+  assert.equal(pickKind(30, PROFILE), RING_KIND.PLAIN);
+
+  const alwaysMix = () => 0;
+  assert.equal(pickKind(30, PROFILE, alwaysMix), RING_KIND.JAGGED);
+
+  const neverMix = () => 0.99;
+  assert.equal(pickKind(30, PROFILE, neverMix), RING_KIND.PLAIN);
+
+  assert.equal(pickKind(0, PROFILE, alwaysMix), RING_KIND.PLAIN);
+});
+
+test('после порога jagged остаётся микс рваных и целых', () => {
+  assert.equal(pickKind(90, PROFILE, () => 0), RING_KIND.JAGGED);
+  assert.equal(pickKind(90, PROFILE, () => 0.99), RING_KIND.PLAIN);
 });
 
 test('createRing воспроизводим по сиду и всегда рождает кольцо вне поля', () => {
