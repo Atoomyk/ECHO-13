@@ -87,7 +87,7 @@ try {
 
     const index = await request('/');
     const html = await index.text();
-    check('GET / отдаёт страницу игры', index.ok && html.includes('PULSE'));
+    check('GET / отдаёт страницу игры', index.ok && html.includes('ECHO dual'));
     check('страница подключает точку входа', html.includes('src/main.js'));
 
     const styles = await request('/styles.css');

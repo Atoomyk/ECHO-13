@@ -66,7 +66,7 @@ export function shareGrid(result, buckets = DAILY_BUCKETS) {
  */
 export function shareText(result, { day, daily = false } = {}) {
   const seconds = result.elapsedSec.toFixed(1);
-  const title = daily && day ? `PULSE · челлендж дня #${day}` : 'PULSE';
+  const title = daily && day ? `ECHO dual · челлендж дня #${day}` : 'ECHO dual';
   const lines = [
     `${title} ${result.score} очков`,
     `${seconds} с · множитель чистых уклонений: ${result.cleanDodges}`,

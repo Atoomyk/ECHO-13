@@ -4,10 +4,10 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
   <meta name="theme-color" content="#000000" />
-  <meta name="description" content="PULSE — минималистичная аркада: одна кнопка, сжимающиеся кольца, ежедневный челлендж." />
-  <title>PULSE</title>
+  <meta name="description" content="ECHO dual — чёрно-белая аркада: два центра, сжимающиеся кольца, ежедневный челлендж." />
+  <title>ECHO dual</title>
   <link rel="stylesheet" href="./styles.css" />
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23000'/%3E%3Ccircle cx='16' cy='16' r='5' fill='%23fff'/%3E%3C/svg%3E" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23000'/%3E%3Ccircle cx='10' cy='16' r='4' fill='%23fff'/%3E%3Ccircle cx='22' cy='16' r='4' fill='%23fff'/%3E%3C/svg%3E" />
 </head>
 <body>
   <!-- Игровое поле. Canvas занимает весь экран, интерфейс лежит поверх ним. -->
@@ -40,33 +40,46 @@
 
     <!-- Главное меню. -->
     <section class="panel panel--menu" id="menu" data-ui>
-      <h1 class="logo">PULSE<span class="logo__tick">·</span></h1>
-      <p class="tagline">две точки · сжимающиеся кольца</p>
+      <div class="menu-layout">
+        <div class="menu-brand">
+          <h1 class="logo">ECHO<span class="logo__sub"> dual</span><span class="logo__tick">·</span></h1>
+          <p class="tagline">два центра · сжимающиеся кольца</p>
+        </div>
 
+        <div class="menu-actions">
+          <div class="menu-buttons">
+            <button class="btn btn--primary" id="btn-dual" type="button">ИГРАТЬ</button>
+            <button class="btn" id="btn-daily" type="button">ЧЕЛЛЕНДЖ ДНЯ</button>
+            <button class="btn btn--ghost" id="btn-scores" type="button">РЕКОРДЫ</button>
+            <button class="btn btn--ghost" id="btn-rules" type="button">ПРАВИЛА</button>
+          </div>
+
+          <div class="settings">
+            <label class="field">
+              <span class="field__label">ИМЯ</span>
+              <input class="field__input" id="input-name" type="text" maxlength="24" placeholder="аноним" autocomplete="off" />
+            </label>
+            <button class="toggle" id="btn-sound" type="button" aria-pressed="true">ЗВУК: ВКЛ</button>
+          </div>
+
+          <p class="records">
+            ЛУЧШИЙ: <span id="best-score">0</span> · ДЕНЬ: <span id="best-daily">0</span>
+          </p>
+          <p class="hint">ЛКМ / левая половина · ПКМ / правая · пауза — Esc</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Правила. -->
+    <section class="panel panel--rules" id="rules" data-ui hidden>
+      <h2 class="panel__title">ПРАВИЛА</h2>
       <div class="rules">
-        <p><b>Нажми</b> — импульс отталкивает близкие кольца.</p>
-        <p><b>Не жми</b> — энергия восстанавливается.</p>
-        <p><b>Рваное кольцо</b> — пропусти его через разрыв, это повышает множитель.</p>
+        <p><b>Нажми</b> — импульс отталкивает близкие кольца своей стороны.</p>
+        <p><b>Не жми</b> — энергия восстанавливается (общая на обе точки).</p>
+        <p><b>Рваное кольцо</b> — пропусти через разрыв, это повышает множитель.</p>
+        <p><b>Ландшафт</b> — два центра: слева и справа.</p>
       </div>
-
-      <div class="menu-buttons">
-        <button class="btn btn--primary" id="btn-dual" type="button">ИГРАТЬ</button>
-        <button class="btn" id="btn-daily" type="button">ЧЕЛЛЕНДЖ ДНЯ</button>
-        <button class="btn btn--ghost" id="btn-scores" type="button">РЕКОРДЫ</button>
-      </div>
-
-      <div class="settings">
-        <label class="field">
-          <span class="field__label">ИМЯ</span>
-          <input class="field__input" id="input-name" type="text" maxlength="24" placeholder="аноним" autocomplete="off" />
-        </label>
-        <button class="toggle" id="btn-sound" type="button" aria-pressed="true">ЗВУК: ВКЛ</button>
-      </div>
-
-      <p class="records">
-        ЛУЧШИЙ: <span id="best-score">0</span> · ДЕНЬ: <span id="best-daily">0</span>
-      </p>
-      <p class="hint">dual: ЛКМ/ПКМ или две половины экрана · пауза — Esc</p>
+      <button class="btn btn--ghost" id="btn-rules-back" type="button">НАЗАД</button>
     </section>
 
     <!-- Таблица рекордов. -->
@@ -81,7 +94,7 @@
     <section class="panel panel--pause" id="pause" data-ui hidden>
       <h2 class="panel__title">ПАУЗА</h2>
       <p class="tagline">игра ждёт тебя</p>
-      <div class="menu-buttons">
+      <div class="menu-buttons menu-buttons--row">
         <button class="btn btn--primary" id="btn-resume" type="button">ПРОДОЛЖИТЬ</button>
         <button class="btn btn--ghost" id="btn-quit" type="button">В МЕНЮ</button>
       </div>
@@ -110,7 +123,7 @@
       </div>
       <pre class="grid" id="over-grid" aria-label="Сетка результата"></pre>
       <p class="record-badge" id="over-record" hidden>НОВЫЙ РЕКОРД</p>
-      <div class="menu-buttons">
+      <div class="menu-buttons menu-buttons--row">
         <button class="btn btn--primary" id="btn-again" type="button">ЕЩЁ РАЗ</button>
         <button class="btn" id="btn-share" type="button">СКОПИРОВАТЬ</button>
         <button class="btn btn--ghost" id="btn-menu" type="button">В МЕНЮ</button>
@@ -130,7 +143,7 @@
       <div class="rotate-gate__card">
         <span class="rotate-gate__phone" aria-hidden="true"></span>
         <p class="rotate-gate__title">ПОВЕРНИ ТЕЛЕФОН</p>
-        <p class="rotate-gate__text">игра для ландшафта — два центра слева и справа</p>
+        <p class="rotate-gate__text">ECHO dual — два центра слева и справа</p>
       </div>
     </div>
   </main>

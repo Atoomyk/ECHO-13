@@ -52,6 +52,7 @@ const el = {
   mode: document.getElementById('hud-mode'),
   pauseBtn: document.getElementById('btn-pause'),
   menu: document.getElementById('menu'),
+  rules: document.getElementById('rules'),
   scores: document.getElementById('scores'),
   scoresTitle: document.getElementById('scores-title'),
   scoresList: document.getElementById('scores-list'),
@@ -81,10 +82,11 @@ const el = {
  * @param {HTMLElement|null} visible
  */
 function showPanel(visible) {
-  for (const panel of [el.menu, el.scores, el.pause, el.over]) {
+  for (const panel of [el.menu, el.rules, el.scores, el.pause, el.over]) {
     panel.hidden = panel !== visible;
   }
-  el.hud.hidden = visible === el.menu || visible === el.scores;
+  el.hud.hidden =
+    visible === el.menu || visible === el.scores || visible === el.rules;
 }
 
 /** Сообщение внизу экрана. */
@@ -382,6 +384,14 @@ document.getElementById('btn-scores').addEventListener('click', async () => {
   await openScores(false);
 });
 
+document.getElementById('btn-rules').addEventListener('click', () => {
+  showPanel(el.rules);
+});
+
+document.getElementById('btn-rules-back').addEventListener('click', () => {
+  showPanel(el.menu);
+});
+
 document.getElementById('btn-scores-back').addEventListener('click', () => {
   showPanel(el.menu);
 });
@@ -552,7 +562,7 @@ document.addEventListener('visibilitychange', () => {
 });
 
 function boot() {
-  console.info(`[PULSE] RULES_VERSION=${RULES_VERSION}`);
+  console.info(`[ECHO dual] RULES_VERSION=${RULES_VERSION}`);
 
   const savedName = getPlayerName();
   el.name.value = savedName;

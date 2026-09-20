@@ -1,4 +1,4 @@
-/* PULSE — чёрно-белая минималистичная аркада.
+/* ECHO dual — чёрно-белая минималистичная аркада.
    Только два цвета и альфа-градиенты для свечения: никаких серых заливок.
    Шрифт моноширинный, из системных — внешних запросов нет. */
 
@@ -191,7 +191,8 @@ html, body {
 .panel--menu,
 .panel--over,
 .panel--pause,
-.panel--scores {
+.panel--scores,
+.panel--rules {
   animation: panel-in 240ms var(--ease) both;
 }
 
@@ -215,8 +216,32 @@ html, body {
   animation: breathe 4s var(--ease) infinite;
 }
 
+.logo__sub {
+  font-size: 0.42em;
+  letter-spacing: 0.2em;
+  opacity: 0.75;
+  vertical-align: middle;
+}
+
 .logo__tick {
   animation: blink 1.1s steps(2, end) infinite;
+}
+
+.menu-layout {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.menu-buttons--row {
+  flex-direction: row;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.menu-buttons--row .btn {
+  flex: 1 1 auto;
+  min-width: 7.5rem;
 }
 
 @keyframes breathe {
@@ -568,7 +593,139 @@ html, body {
   .rules { font-size: 11px; }
 }
 
+/* ------------------------------------ компактный UI в ландшафте */
+
+@media (orientation: landscape) and (max-height: 520px) {
+  .panel {
+    width: min(94vw, 740px);
+    max-height: 92vh;
+    padding: 10px 16px;
+  }
+
+  .panel--menu .menu-layout {
+    display: grid;
+    grid-template-columns: minmax(140px, 0.9fr) minmax(200px, 1.2fr);
+    gap: 8px 20px;
+    align-items: center;
+    text-align: left;
+  }
+
+  .panel--menu .menu-brand {
+    text-align: left;
+  }
+
+  .panel--menu .logo {
+    font-size: clamp(26px, 9vh, 40px);
+    letter-spacing: 0.12em;
+  }
+
+  .panel--menu .tagline {
+    margin: 4px 0 0;
+    font-size: 10px;
+  }
+
+  .panel--menu .menu-buttons {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+    margin-bottom: 8px;
+  }
+
+  .panel--menu .menu-buttons .btn--primary {
+    grid-column: 1 / -1;
+  }
+
+  .btn {
+    padding: 8px 12px;
+    font-size: 11px;
+  }
+
+  .settings {
+    margin-bottom: 6px;
+    gap: 6px;
+  }
+
+  .field__input {
+    padding: 7px 0;
+    font-size: 12px;
+  }
+
+  .toggle {
+    font-size: 10px;
+    padding: 0 8px;
+  }
+
+  .records {
+    font-size: 10px;
+    margin: 0;
+  }
+
+  .hint {
+    font-size: 9px;
+    margin-top: 2px;
+  }
+
+  .panel__title {
+    margin-bottom: 4px;
+    font-size: 14px;
+  }
+
+  .panel--pause .tagline {
+    margin: 2px 0 10px;
+    font-size: 11px;
+  }
+
+  .panel--pause .menu-buttons,
+  .panel--over .menu-buttons {
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin: 0;
+  }
+
+  .result {
+    margin: 6px 0;
+    grid-template-columns: 1fr 1fr;
+    gap: 2px 16px;
+  }
+
+  .result__value {
+    font-size: 16px;
+  }
+
+  .grid {
+    margin: 4px 0;
+    font-size: 11px;
+  }
+
+  .record-badge {
+    margin: 4px 0;
+    font-size: 10px;
+  }
+
+  .panel--rules .rules {
+    margin-bottom: 10px;
+    font-size: 11px;
+    columns: 2;
+    column-gap: 16px;
+  }
+
+  .panel--rules .rules p {
+    break-inside: avoid;
+  }
+
+  .scores {
+    max-height: 42vh;
+    overflow: auto;
+    margin: 6px 0;
+  }
+}
+
 /* На широких экранах панель центрируется, поле остаётся круглым. */
 @media (min-width: 900px) {
   .panel { width: min(60vw, 460px); }
+}
+
+@media (orientation: landscape) and (max-height: 520px) and (min-width: 900px) {
+  .panel { width: min(70vw, 740px); }
 }
