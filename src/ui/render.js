@@ -37,6 +37,13 @@ const HIT_TINT_COLOR = '#FF3B3B';
 const PULSE_RGB = Object.freeze({ r: 79, g: 195, b: 247 });
 /** RGB удара. */
 const HIT_RGB = Object.freeze({ r: 255, g: 59, b: 59 });
+/**
+ * Запас под HUD в dual (CSS-px), если полосу нельзя измерить.
+ * Реальная высота берётся из `.hud` + небольшой зазор.
+ */
+const DUAL_HUD_INSET_CSS = 56;
+/** Воздух между низом HUD и верхом игровой зоны. */
+const DUAL_HUD_GAP_CSS = 8;
 
 /**
  * @param {{r: number, g: number, b: number}} a
@@ -202,6 +209,11 @@ export class Renderer {
     this.cx = 0;
     this.cy = 0;
     this.dpr = 1;
+    /**
+     * Dual: игровая зона под HUD (cy ниже, scale от высоты минус полоса).
+     * Single остаётся на полном кадре.
+     */
+    this.dualPlayfield = false;
     /** Считает, сколько кадров подряд длится инверсия — эффект на один кадр. */
     this.invertFrames = 0;
     this.echoes = [];
@@ -216,8 +228,13 @@ export class Renderer {
     this.resize();
   }
 
-  /** Подогнать буфер под размер окна с учётом плотности пикселей. */
-  resize() {
+  /**
+   * Подогнать буфер под размер окна с учётом плотности пикселей.
+   * @param {{dual?: boolean}} [options] dual — опустить/ужать playfield под HUD
+   */
+  resize({ dual = this.dualPlayfield } = {}) {
+    this.dualPlayfield = Boolean(dual);
+
     const rect = this.canvas.getBoundingClientRect();
     const width = Math.max(1, Math.round(rect.width));
     const height = Math.max(1, Math.round(rect.height));
@@ -227,10 +244,30 @@ export class Renderer {
     this.canvas.width = Math.round(width * this.dpr);
     this.canvas.height = Math.round(height * this.dpr);
 
+    const playTop = this.dualPlayfield ? this.dualHudInsetPx() : 0;
+    const playH = Math.max(1, this.canvas.height - playTop);
+
     this.cx = this.canvas.width / 2;
-    this.cy = this.canvas.height / 2;
-    // Поле вписано в меньшую сторону: на широком экране кольца не растягиваются.
-    this.scale = (Math.min(this.canvas.width, this.canvas.height) / 2) / SPAWN_RADIUS;
+    // Центр мира — середина зоны под HUD, не середина всего экрана.
+    this.cy = playTop + playH / 2;
+    // Вписываем SPAWN_RADIUS в доступную высоту/ширину playfield.
+    this.scale = (Math.min(this.canvas.width, playH) / 2) / SPAWN_RADIUS;
+  }
+
+  /**
+   * Верхний отступ dual-playfield в пикселях буфера (CSS × dpr).
+   * Берём фактическую высоту HUD, иначе запас ~56px.
+   */
+  dualHudInsetPx() {
+    let insetCss = DUAL_HUD_INSET_CSS;
+    const hud = this.canvas.parentElement?.querySelector('.hud');
+    if (hud && !hud.hidden) {
+      insetCss = Math.max(
+        DUAL_HUD_INSET_CSS,
+        Math.ceil(hud.getBoundingClientRect().height) + DUAL_HUD_GAP_CSS,
+      );
+    }
+    return Math.round(insetCss * this.dpr);
   }
 
   /** Включить режим без пульсации — для `prefers-reduced-motion`. */

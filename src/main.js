@@ -172,6 +172,8 @@ function startGame({ daily = false } = {}) {
   el.tapHint.replaceChildren(pulseMark ?? document.createElement('span'), document.createTextNode(` ${hintText}`));
   if (pulseMark) pulseMark.className = 'tap-hint__pulse';
   updateHud();
+  // HUD уже виден: пересчитать playfield (dual — зона под полосой счёта/энергии).
+  renderer.resize({ dual: usingDual });
 
   sound.unlock();
   ticking = false;
@@ -546,7 +548,8 @@ function updateOrientationGate() {
 
 /** Подстроить поле под размер окна и учесть системные настройки анимации. */
 function handleResize() {
-  renderer.resize();
+  const dual = usingDual && game.mode === GAME_MODE.DUAL;
+  renderer.resize({ dual });
   updateOrientationGate();
 }
 
