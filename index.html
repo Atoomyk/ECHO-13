@@ -17,19 +17,17 @@
     <!-- Область нажатия: единственная кнопка игры. -->
     <div class="stage__tap" id="tap-surface" aria-hidden="true"></div>
 
-    <!-- HUD: счёт, энергия, время, пауза. -->
+    <!-- HUD: компактная верхняя строка + энергия + LV/пауза. -->
     <header class="hud" id="hud" data-ui hidden>
-      <div class="hud__row">
-        <span class="hud__label">СЧЁТ</span>
-        <span class="hud__value" id="hud-score">0</span>
-      </div>
-      <div class="hud__row">
-        <span class="hud__label">ВРЕМЯ</span>
-        <span class="hud__value" id="hud-time">0.0</span>
-      </div>
-      <div class="hud__row hud__row--mult">
-        <span class="hud__label">×</span>
-        <span class="hud__value" id="hud-mult">1.00</span>
+      <div class="hud__stats">
+        <div class="hud__stat">
+          <span class="hud__label">СЧЁТ</span>
+          <span class="hud__value" id="hud-score">0</span>
+        </div>
+        <div class="hud__stat">
+          <span class="hud__label">ВРЕМЯ</span>
+          <span class="hud__value" id="hud-time">0.0</span>
+        </div>
       </div>
       <div class="hud__energy" role="progressbar" aria-label="Энергия" aria-valuemin="0" aria-valuemax="100" id="hud-energy-bar">
         <div class="hud__energy-fill" id="hud-energy"></div>
@@ -43,7 +41,7 @@
     <!-- Главное меню. -->
     <section class="panel panel--menu" id="menu" data-ui>
       <h1 class="logo">PULSE<span class="logo__tick">·</span></h1>
-      <p class="tagline">одна кнопка · сжимающиеся кольца</p>
+      <p class="tagline">две точки · сжимающиеся кольца</p>
 
       <div class="rules">
         <p><b>Нажми</b> — импульс отталкивает близкие кольца.</p>
@@ -52,7 +50,7 @@
       </div>
 
       <div class="menu-buttons">
-        <button class="btn btn--primary" id="btn-play" type="button">ИГРАТЬ</button>
+        <button class="btn btn--primary" id="btn-dual" type="button">ИГРАТЬ</button>
         <button class="btn" id="btn-daily" type="button">ЧЕЛЛЕНДЖ ДНЯ</button>
         <button class="btn btn--ghost" id="btn-scores" type="button">РЕКОРДЫ</button>
       </div>
@@ -68,7 +66,7 @@
       <p class="records">
         ЛУЧШИЙ: <span id="best-score">0</span> · ДЕНЬ: <span id="best-daily">0</span>
       </p>
-      <p class="hint">пробел / клик / тап — импульс · пауза — Esc или кнопка</p>
+      <p class="hint">dual: ЛКМ/ПКМ или две половины экрана · пауза — Esc</p>
     </section>
 
     <!-- Таблица рекордов. -->

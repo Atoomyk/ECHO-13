@@ -6,6 +6,7 @@
  */
 
 import { PHASE, PulseGame, STEP_SEC, dailyProfile } from './core/game.js';
+import { GAME_MODE, RULES_VERSION, SIDE } from './core/constants.js';
 import { dayIndex, dailySeed } from './core/random.js';
 import { shareGrid, shareText, summarize } from './core/result.js';
 import {
@@ -35,6 +36,7 @@ const sound = new Sound();
 
 let ticking = false;
 let usingDaily = false;
+let usingDual = false;
 let dailyInfo = null;
 let tickAccumulator = 0;
 let lastFrameMs = performance.now();
@@ -45,7 +47,6 @@ const el = {
   hud: document.getElementById('hud'),
   score: document.getElementById('hud-score'),
   time: document.getElementById('hud-time'),
-  mult: document.getElementById('hud-mult'),
   energyBar: document.getElementById('hud-energy-bar'),
   energy: document.getElementById('hud-energy'),
   mode: document.getElementById('hud-mode'),
@@ -106,15 +107,18 @@ function tickInterval() {
 function updateHud() {
   el.score.textContent = String(game.score);
   el.time.textContent = game.elapsedSec.toFixed(1);
-  el.mult.textContent = game.player.multiplier.toFixed(2);
 
   const ratio = game.player.energyRatio;
   el.energy.style.width = `${Math.round(ratio * 100)}%`;
-  el.energy.classList.toggle('hud__energy-fill--low', ratio < 0.25);
+  el.energy.classList.toggle('hud__energy-fill--low', ratio < 0.3);
   el.energyBar.setAttribute('aria-valuenow', String(Math.round(ratio * 100)));
 
   const level = `LV ${game.level}`;
-  el.mode.textContent = game.daily ? `${level} · ДЕНЬ` : level;
+  if (usingDual) {
+    el.mode.textContent = `${level} · DUAL`;
+  } else {
+    el.mode.textContent = game.daily ? `${level} · ДЕНЬ` : level;
+  }
 }
 
 /** Обновить строки личных рекордов в меню. */
@@ -127,22 +131,33 @@ function updateBestLabels() {
 
 /**
  * Начать партию.
+ * Single временно выключен: свободная игра всегда dual.
  * @param {object} [options]
  * @param {boolean} [options.daily]
  */
 function startGame({ daily = false } = {}) {
   usingDaily = daily;
+  usingDual = !daily;
 
   const profile = daily ? (dailyInfo?.profile ?? dailyProfile()) : undefined;
   const seed = daily ? (dailyInfo?.seed ?? dailySeed()) : `free-${Date.now()}`;
+  const mode = usingDual ? GAME_MODE.DUAL : GAME_MODE.SINGLE;
 
   game.seed = seed;
   game.profile = profile ?? game.profile;
   game.daily = daily;
+  game.mode = mode;
   game.start();
 
   showPanel(null);
   el.tapHint.hidden = false;
+  const hintText = usingDual
+    ? 'ЛКМ / ЛЕВАЯ ПОЛОВИНА · ПКМ / ПРАВАЯ'
+    : 'НАЖМИ, ЧТОБЫ ИМПУЛЬС';
+  // Сохраняем span пульсации, меняем только текстовый узел.
+  const pulseMark = el.tapHint.querySelector('.tap-hint__pulse');
+  el.tapHint.replaceChildren(pulseMark ?? document.createElement('span'), document.createTextNode(` ${hintText}`));
+  if (pulseMark) pulseMark.className = 'tap-hint__pulse';
   updateHud();
 
   sound.unlock();
@@ -154,6 +169,7 @@ function startGame({ daily = false } = {}) {
 function goToMenu() {
   // READY, а не PAUSED: иначе Esc из меню снова запускал брошенную партию.
   game.phase = PHASE.READY;
+  usingDual = false;
   sound.stopAmbient();
   ticking = false;
   showPanel(el.menu);
@@ -195,7 +211,7 @@ function handleEvents(events) {
   for (const event of events) {
     switch (event.type) {
       case 'pulse':
-        renderer.echo();
+        renderer.echo(event.ox ?? 0, event.oy ?? 0);
         // Голубая вспышка и «сброс в белый» только если кольцо реально отбито.
         if (event.pushed > 0) {
           renderer.tintPulse();
@@ -208,7 +224,7 @@ function handleEvents(events) {
         sound.weak();
         break;
       case 'clean':
-        renderer.burst(0, 0, 10, 0.5, 2);
+        renderer.burst(event.ox ?? 0, event.oy ?? 0, 10, 0.5, 2);
         sound.clean(event.multiplier);
         break;
       case 'hit':
@@ -305,7 +321,8 @@ function frame(now) {
 /* ---------------------------------------------------------------- ввод */
 
 const input = new InputController({
-  onPulse: () => {
+  isDual: () => usingDual && game.mode === GAME_MODE.DUAL,
+  onPulse: (side) => {
     sound.unlock();
 
     if (game.phase === PHASE.READY || game.phase === PHASE.OVER) {
@@ -319,7 +336,12 @@ const input = new InputController({
       ticking = true;
       sound.startAmbient();
     }
-    game.pulse();
+
+    if (usingDual) {
+      game.pulse(side === SIDE.R ? SIDE.R : SIDE.L);
+    } else {
+      game.pulse();
+    }
   },
   onPause: () => {
     togglePause();
@@ -338,7 +360,7 @@ el.pauseBtn.addEventListener('click', (event) => {
   togglePause();
 });
 
-document.getElementById('btn-play').addEventListener('click', () => {
+document.getElementById('btn-dual').addEventListener('click', () => {
   usingDaily = false;
   dailyInfo = null;
   startGame({ daily: false });
@@ -476,6 +498,8 @@ document.addEventListener('visibilitychange', () => {
 });
 
 function boot() {
+  console.info(`[PULSE] RULES_VERSION=${RULES_VERSION}`);
+
   const savedName = getPlayerName();
   el.name.value = savedName;
 

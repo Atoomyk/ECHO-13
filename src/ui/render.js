@@ -71,13 +71,15 @@ function shadeRgb(c, factor) {
 /**
  * Угроза для окраски точки.
  * @param {Array<object>} rings
+ * @param {string|null} [side] фильтр стороны dual
  * @returns {{danger: number, safe: number}} danger 0…1 (plain/magnet), safe 0…1 (jagged в reach)
  */
-function threatFromRings(rings) {
+function threatFromRings(rings, side = null) {
   let danger = 0;
   let safe = 0;
   for (const ring of rings) {
     if (ring.pushed) continue;
+    if (side && ring.side !== side) continue;
     if (ring.radius > PULSE_REACH || ring.radius <= 0) continue;
     // От 0 у границы reach до 1 у центра — плавное краснение.
     const raw = 1 - ring.radius / PULSE_REACH;
@@ -92,6 +94,19 @@ function threatFromRings(rings) {
     }
   }
   return { danger, safe };
+}
+
+/**
+ * Мировой origin кольца из снимка.
+ * @param {object} ring
+ * @param {object} state
+ * @returns {{x: number, y: number}}
+ */
+function ringOrigin(ring, state) {
+  if (!state?.centers) return { x: 0, y: 0 };
+  if (ring.side && state.centers[ring.side]) return state.centers[ring.side];
+  if (state.centers.C) return state.centers.C;
+  return { x: 0, y: 0 };
 }
 
 /**
@@ -244,8 +259,8 @@ export class Renderer {
   }
 
   /** Волна-эхо от импульса: расширяется и затухает за 300 мс. */
-  echo() {
-    this.echoes.push({ age: 0, radius: 0 });
+  echo(ox = 0, oy = 0) {
+    this.echoes.push({ age: 0, radius: 0, ox, oy });
   }
 
   /** Разлёт частиц из точки — используется при проигрыше и разрушении кольца. */
@@ -286,16 +301,17 @@ export class Renderer {
     // кадр показалось бы целым рядом с собственным взрывом.
     const gone = new Set(bursts.map((item) => item.id));
 
-    this.drawRings(ctx, state.rings, fg, gone);
+    this.drawRings(ctx, state, fg, gone);
     this.drawEchoes(ctx, dt, fg);
     this.drawParticles(ctx, dt, fg);
-    this.drawPlayer(ctx, state, fg);
+    this.drawPlayers(ctx, state, fg);
 
     for (const burst of bursts) this.shatterRing(burst);
   }
 
   /** Кольца: сплошные, рваные (разрыв) и магнитные (тянущая пунктирная дуга). */
-  drawRings(ctx, rings, fg, gone = null) {
+  drawRings(ctx, state, fg, gone = null) {
+    const rings = state.rings || [];
     const maxSide = Math.max(this.canvas.width, this.canvas.height);
 
     for (const ring of rings) {
@@ -306,6 +322,9 @@ export class Renderer {
       if (screenRadius <= 0) continue;
       // Кольцо ушло за кадр: рисовать нечего.
       if (screenRadius > maxSide) continue;
+
+      const origin = ringOrigin(ring, state);
+      const originPx = this.toPixels(origin.x, origin.y);
 
       // Близко к центру кольцо уже не угроза: оно либо отбито, либо прошло.
       // Гасим его, чтобы в центре не скапливалась сплошная белая каша.
@@ -319,9 +338,9 @@ export class Renderer {
       ctx.lineCap = 'round';
       ctx.globalAlpha = fade;
 
-      this.drawRingGlow(ctx, ring, screenRadius, thickness, fg, fade);
+      this.drawRingGlow(ctx, ring, screenRadius, thickness, fg, fade, originPx);
       ctx.globalAlpha = fade;
-      this.drawRingBody(ctx, ring, screenRadius, thickness, fg);
+      this.drawRingBody(ctx, ring, screenRadius, thickness, fg, originPx);
 
       ctx.restore();
     }
@@ -336,20 +355,23 @@ export class Renderer {
    * Мягкое свечение кольца: три расширяющихся прохода с падающей альфой.
    * Свечение повторяет разрыв — иначе дырка заливается и «пропадает».
    */
-  drawRingGlow(ctx, ring, screenRadius, thickness, fg, fade) {
+  drawRingGlow(ctx, ring, screenRadius, thickness, fg, fade, originPx) {
     for (let pass = 3; pass >= 1; pass -= 1) {
       ctx.globalAlpha = 0.045 * pass * fade;
       ctx.lineWidth = thickness * (1 + pass * 1.6);
-      this.strokeRingPath(ctx, ring, screenRadius);
+      this.strokeRingPath(ctx, ring, screenRadius, originPx);
     }
     ctx.globalAlpha = fade;
   }
 
   /** Обвести кольцо с учётом разрыва (или полный круг, если разрыва нет). */
-  strokeRingPath(ctx, ring, screenRadius) {
+  strokeRingPath(ctx, ring, screenRadius, originPx = null) {
+    const ox = originPx?.x ?? this.cx;
+    const oy = originPx?.y ?? this.cy;
+
     if (ring.gapAngle === null) {
       ctx.beginPath();
-      ctx.arc(this.cx, this.cy, screenRadius, 0, Math.PI * 2);
+      ctx.arc(ox, oy, screenRadius, 0, Math.PI * 2);
       ctx.stroke();
       return;
     }
@@ -360,8 +382,8 @@ export class Renderer {
 
     for (let angle = 0; angle <= Math.PI * 2 + step; angle += step) {
       const inGap = angleDistance(angle, ring.gapAngle) <= GAP_SPAN / 2;
-      const x = this.cx + Math.cos(angle) * screenRadius;
-      const y = this.cy + Math.sin(angle) * screenRadius;
+      const x = ox + Math.cos(angle) * screenRadius;
+      const y = oy + Math.sin(angle) * screenRadius;
 
       if (inGap) {
         drawing = false;
@@ -378,24 +400,26 @@ export class Renderer {
   }
 
   /** Основная линия кольца с учётом разрыва. */
-  drawRingBody(ctx, ring, screenRadius, thickness, fg) {
+  drawRingBody(ctx, ring, screenRadius, thickness, fg, originPx) {
     ctx.lineWidth = thickness;
     ctx.globalAlpha = 1;
-    this.strokeRingPath(ctx, ring, screenRadius);
+    this.strokeRingPath(ctx, ring, screenRadius, originPx);
 
     if (ring.gapAngle !== null) {
-      this.drawGapEdges(ctx, ring, screenRadius, thickness, fg);
+      this.drawGapEdges(ctx, ring, screenRadius, thickness, fg, originPx);
     }
 
     if (ring.kind === RING_KIND.MAGNET) {
       // Пунктир всегда: magnet без разрыва, иначе его не отличить от plain.
-      this.drawMagnetHint(ctx, screenRadius, thickness, fg, ring.pulling);
+      this.drawMagnetHint(ctx, screenRadius, thickness, fg, ring.pulling, originPx);
     }
   }
 
   /** Яркие кончики у края разрыва — ориентир для «дырка = тайминг». */
-  drawGapEdges(ctx, ring, screenRadius, thickness, fg) {
+  drawGapEdges(ctx, ring, screenRadius, thickness, fg, originPx) {
     const half = GAP_SPAN / 2;
+    const ox = originPx?.x ?? this.cx;
+    const oy = originPx?.y ?? this.cy;
     ctx.save();
     ctx.globalAlpha = 0.9;
     ctx.lineWidth = thickness * 1.4;
@@ -404,7 +428,7 @@ export class Renderer {
     for (const side of [-1, 1]) {
       const angle = ring.gapAngle + side * half;
       ctx.beginPath();
-      ctx.arc(this.cx, this.cy, screenRadius, angle - 0.05, angle + 0.05);
+      ctx.arc(ox, oy, screenRadius, angle - 0.05, angle + 0.05);
       ctx.stroke();
     }
     ctx.restore();
@@ -414,14 +438,16 @@ export class Renderer {
    * Пунктир внутри магнитного кольца: показывает, что оно потянет к центру.
    * @param {boolean} [pulling] в зоне тяги — ярче
    */
-  drawMagnetHint(ctx, screenRadius, thickness, fg, pulling = false) {
+  drawMagnetHint(ctx, screenRadius, thickness, fg, pulling = false, originPx = null) {
+    const ox = originPx?.x ?? this.cx;
+    const oy = originPx?.y ?? this.cy;
     const inner = Math.max(0, screenRadius - thickness * 3);
     ctx.save();
     ctx.globalAlpha = pulling ? 0.55 : 0.28;
     ctx.lineWidth = thickness * (pulling ? 0.9 : 0.7);
     ctx.setLineDash([screenRadius * 0.06, screenRadius * 0.09]);
     ctx.beginPath();
-    ctx.arc(this.cx, this.cy, inner, 0, Math.PI * 2);
+    ctx.arc(ox, oy, inner, 0, Math.PI * 2);
     ctx.stroke();
     ctx.restore();
   }
@@ -435,13 +461,14 @@ export class Renderer {
 
       const progress = echo.age / ECHO_LIFE_SEC;
       echo.radius = progress * PULSE_REACH * this.scale;
+      const origin = this.toPixels(echo.ox ?? 0, echo.oy ?? 0);
 
       ctx.save();
       ctx.globalAlpha = (1 - progress) * 0.5;
       ctx.strokeStyle = fg;
       ctx.lineWidth = Math.max(1 * this.dpr, 3 * this.dpr * (1 - progress));
       ctx.beginPath();
-      ctx.arc(this.cx, this.cy, echo.radius, 0, Math.PI * 2);
+      ctx.arc(origin.x, origin.y, echo.radius, 0, Math.PI * 2);
       ctx.stroke();
       ctx.restore();
 
@@ -490,13 +517,37 @@ export class Renderer {
     ctx.restore();
   }
 
+  /**
+   * Точки игрока: одна в single, две в dual.
+   * Общая энергия; угроза и gap-подсказка — по стороне.
+   */
+  drawPlayers(ctx, state, fg) {
+    const centers = state.centers || { C: { x: 0, y: 0 } };
+    const dual = state.mode === 'dual';
+    const entries = dual
+      ? [
+          { key: 'L', origin: centers.L || { x: 0, y: 0 } },
+          { key: 'R', origin: centers.R || { x: 0, y: 0 } },
+        ]
+      : [{ key: null, origin: centers.C || { x: 0, y: 0 } }];
+
+    for (const entry of entries) {
+      const gap =
+        dual && state.gapAlignedBySide
+          ? Boolean(state.gapAlignedBySide[entry.key])
+          : Boolean(state.gapAligned);
+      this.drawPlayerAt(ctx, state, fg, entry.origin, entry.key, gap);
+    }
+  }
+
   /** Точка игрока: объёмный шар с бликом, оболочка энергии, сигналы угрозы. */
-  drawPlayer(ctx, state, fg) {
+  drawPlayerAt(ctx, state, fg, origin, side, gapAligned) {
+    const px = this.toPixels(origin.x, origin.y);
     const beat = this.reducedMotion ? 1 : 1 + Math.sin(this.heartbeat * Math.PI * 2) * 0.06;
     const base = Math.max(5, 7 * this.dpr) * beat;
     const alpha = state.invulnerable ? 0.45 : 1;
     const energy = Math.min(1, Math.max(0, state.energyRatio ?? 1));
-    const { danger, safe } = threatFromRings(state.rings || []);
+    const { danger, safe } = threatFromRings(state.rings || [], side);
     const white = { r: 255, g: 255, b: 255 };
     const silver = { r: 210, g: 220, b: 230 };
 
@@ -520,13 +571,13 @@ export class Renderer {
     ctx.save();
 
     // Мягкое свечение вокруг шара.
-    const glow = ctx.createRadialGradient(this.cx, this.cy, base * 0.2, this.cx, this.cy, base * 3.2);
+    const glow = ctx.createRadialGradient(px.x, px.y, base * 0.2, px.x, px.y, base * 3.2);
     glow.addColorStop(0, cssRgb(core, alpha * 0.28));
     glow.addColorStop(0.45, cssRgb(core, alpha * 0.08));
     glow.addColorStop(1, cssRgb(core, 0));
     ctx.fillStyle = glow;
     ctx.beginPath();
-    ctx.arc(this.cx, this.cy, base * 3.2, 0, Math.PI * 2);
+    ctx.arc(px.x, px.y, base * 3.2, 0, Math.PI * 2);
     ctx.fill();
 
     // Оболочка энергии.
@@ -553,16 +604,16 @@ export class Renderer {
     ctx.strokeStyle = shellColor;
     ctx.lineWidth = shellWidth;
     ctx.beginPath();
-    ctx.arc(this.cx, this.cy, shellRadius, 0, Math.PI * 2);
+    ctx.arc(px.x, px.y, shellRadius, 0, Math.PI * 2);
     ctx.stroke();
 
     // Объёмное тело: градиент от блика к тёмному краю.
     const body = ctx.createRadialGradient(
-      this.cx + hx,
-      this.cy + hy,
+      px.x + hx,
+      px.y + hy,
       base * 0.05,
-      this.cx,
-      this.cy,
+      px.x,
+      px.y,
       base,
     );
     const hi = mixRgb(white, core, 0.15);
@@ -574,17 +625,17 @@ export class Renderer {
     ctx.globalAlpha = 1;
     ctx.fillStyle = body;
     ctx.beginPath();
-    ctx.arc(this.cx, this.cy, base, 0, Math.PI * 2);
+    ctx.arc(px.x, px.y, base, 0, Math.PI * 2);
     ctx.fill();
 
     // Спекулярный блик — маленькое «стеклянное» пятно.
     const specR = base * 0.42;
     const spec = ctx.createRadialGradient(
-      this.cx + hx * 1.1,
-      this.cy + hy * 1.1,
+      px.x + hx * 1.1,
+      px.y + hy * 1.1,
       0,
-      this.cx + hx * 1.1,
-      this.cy + hy * 1.1,
+      px.x + hx * 1.1,
+      px.y + hy * 1.1,
       specR,
     );
     spec.addColorStop(0, `rgba(255, 255, 255, ${alpha * 0.9})`);
@@ -592,17 +643,17 @@ export class Renderer {
     spec.addColorStop(1, 'rgba(255, 255, 255, 0)');
     ctx.fillStyle = spec;
     ctx.beginPath();
-    ctx.arc(this.cx + hx * 1.1, this.cy + hy * 1.1, specR, 0, Math.PI * 2);
+    ctx.arc(px.x + hx * 1.1, px.y + hy * 1.1, specR, 0, Math.PI * 2);
     ctx.fill();
 
     // Холодный обод снизу-справа — лёгкий серебристый перелив.
     if (!this.reducedMotion || danger <= 0) {
       const rim = ctx.createRadialGradient(
-        this.cx - hx * 0.6,
-        this.cy - hy * 0.4,
+        px.x - hx * 0.6,
+        px.y - hy * 0.4,
         base * 0.3,
-        this.cx,
-        this.cy,
+        px.x,
+        px.y,
         base,
       );
       const rimTint =
@@ -616,17 +667,17 @@ export class Renderer {
       rim.addColorStop(1, cssRgb(rimTint, alpha * 0.35));
       ctx.fillStyle = rim;
       ctx.beginPath();
-      ctx.arc(this.cx, this.cy, base, 0, Math.PI * 2);
+      ctx.arc(px.x, px.y, base, 0, Math.PI * 2);
       ctx.fill();
     }
 
     // Разрыв смотрит в центр: тонкое кольцо-подсказка «можно не жать».
-    if (state.gapAligned && !this.reducedMotion) {
+    if (gapAligned && !this.reducedMotion) {
       ctx.globalAlpha = alpha * 0.7;
       ctx.strokeStyle = PULSE_TINT_COLOR;
       ctx.lineWidth = Math.max(1, 1.5 * this.dpr);
       ctx.beginPath();
-      ctx.arc(this.cx, this.cy, Math.max(shellRadius * 1.08, base * 1.85), 0, Math.PI * 2);
+      ctx.arc(px.x, px.y, Math.max(shellRadius * 1.08, base * 1.85), 0, Math.PI * 2);
       ctx.stroke();
     }
 
@@ -636,7 +687,7 @@ export class Renderer {
       ctx.strokeStyle = this.hitTintSec > 0 || this.pulseTintSec > 0 ? fg : 'rgba(0,0,0,0.55)';
       ctx.lineWidth = Math.max(1, 1.5 * this.dpr);
       ctx.beginPath();
-      ctx.arc(this.cx, this.cy, base * 0.38, 0, Math.PI * 2);
+      ctx.arc(px.x, px.y, base * 0.38, 0, Math.PI * 2);
       ctx.stroke();
     }
     ctx.restore();
@@ -655,12 +706,21 @@ export class Renderer {
   shatterRing(ring, power = 1) {
     if (!(ring.radius > 0)) return;
 
+    const ox = Number.isFinite(ring.ox) ? ring.ox : 0;
+    const oy = Number.isFinite(ring.oy) ? ring.oy : 0;
+
     // У самого центра сегменты слишком короткие: сыплем крошку вместо дуг.
     if (ring.radius < BURST_MIN_SEGMENT_RADIUS) {
       const dust = Math.min(18, 6 + Math.round(ring.radius * 40));
       for (let i = 0; i < dust; i += 1) {
         const angle = (i / dust) * Math.PI * 2 + (ring.id % 7) * 0.1;
-        this.burst(Math.cos(angle) * ring.radius, Math.sin(angle) * ring.radius, 1, 0.5 * power, 2);
+        this.burst(
+          ox + Math.cos(angle) * ring.radius,
+          oy + Math.sin(angle) * ring.radius,
+          1,
+          0.5 * power,
+          2,
+        );
       }
       return;
     }
@@ -687,8 +747,8 @@ export class Renderer {
       const size = Math.max(1 * this.dpr, thickness * this.scale * 0.8);
 
       particle.spawnShard(
-        Math.cos(angle) * ring.radius,
-        Math.sin(angle) * ring.radius,
+        ox + Math.cos(angle) * ring.radius,
+        oy + Math.sin(angle) * ring.radius,
         angle,
         speed * jitter,
         life,
@@ -702,14 +762,15 @@ export class Renderer {
   shatter(state) {
     for (const ring of state.rings) {
       if (ring.radius <= 0) continue;
+      const origin = ringOrigin(ring, state);
       const screenRadius = ring.radius * this.scale;
       const count = Math.min(14, 4 + Math.round(screenRadius / 24));
 
       for (let i = 0; i < count; i += 1) {
         const angle = (i / count) * Math.PI * 2;
-        const x = Math.cos(angle) * ring.radius;
-        const y = Math.sin(angle) * ring.radius;
-        // Частицы летят к центру: кольцо «схлопывается» на игроке.
+        const x = origin.x + Math.cos(angle) * ring.radius;
+        const y = origin.y + Math.sin(angle) * ring.radius;
+        // Частицы летят к центру стороны: кольцо «схлопывается» на игроке.
         this.burst(x, y, 1, 0.35, 3);
       }
     }

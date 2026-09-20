@@ -70,42 +70,45 @@ html, body {
 .hud {
   position: absolute;
   inset: 0 0 auto 0;
-  padding: var(--pad);
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 4px 16px;
+  padding: max(8px, env(safe-area-inset-top, 0px)) var(--pad) 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
   pointer-events: none;
   z-index: 2;
 }
 
-.hud__row {
+.hud__stats {
   display: flex;
   align-items: baseline;
-  gap: 8px;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 0;
 }
 
-.hud__row--mult {
-  grid-column: 2;
-  justify-content: flex-end;
+.hud__stat {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
 }
 
 .hud__label {
   opacity: 0.55;
-  font-size: 11px;
+  font-size: 10px;
   letter-spacing: 0.18em;
 }
 
 .hud__value {
-  font-size: clamp(18px, 4.5vw, 26px);
+  font-size: clamp(14px, 3.2vw, 18px);
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.04em;
+  line-height: 1.2;
 }
 
-/* Полоса энергии: тонкая линия под счётом. */
+/* Полоса энергии: сразу под строкой счёта. */
 .hud__energy {
-  grid-column: 1 / -1;
-  margin-top: 10px;
-  height: 2px;
+  height: 4px;
+  margin-top: 2px;
   background: rgba(255, 255, 255, 0.16);
   overflow: hidden;
 }
@@ -115,31 +118,32 @@ html, body {
   width: 100%;
   background: var(--ink);
   box-shadow: 0 0 10px rgba(255, 255, 255, 0.8);
-  transition: width 90ms linear;
+  transition: width 90ms linear, background-color 180ms ease, box-shadow 180ms ease;
 }
 
-/* На низкой энергии полоса мигает — единственный «серый» сигнал в игре. */
+/* Ниже 30%: красный остаток + лёгкий миг. */
 .hud__energy-fill--low {
-  animation: pulse-low 420ms steps(2, end) infinite;
+  background: #ff3b3b;
+  box-shadow: 0 0 10px rgba(255, 59, 59, 0.75);
+  animation: pulse-low 640ms ease-in-out infinite;
 }
 
 @keyframes pulse-low {
-  0% { opacity: 1; }
-  100% { opacity: 0.35; }
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
 }
 
 .hud__toolbar {
-  grid-column: 1 / -1;
-  margin-top: 8px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  margin-top: 2px;
 }
 
 .hud__mode {
   margin: 0;
-  font-size: 11px;
+  font-size: 10px;
   letter-spacing: 0.2em;
   opacity: 0.6;
 }
@@ -149,12 +153,12 @@ html, body {
   appearance: none;
   pointer-events: auto;
   margin: 0;
-  padding: 6px 12px;
+  padding: 4px 10px;
   border: 1px solid rgba(255, 255, 255, 0.45);
   background: rgba(0, 0, 0, 0.55);
   color: inherit;
   font: inherit;
-  font-size: 11px;
+  font-size: 10px;
   letter-spacing: 0.18em;
   cursor: pointer;
 }
@@ -493,7 +497,7 @@ html, body {
 }
 
 @media (max-width: 420px) {
-  .hud__label { font-size: 10px; }
+  .hud__label { font-size: 9px; }
   .rules { font-size: 11px; }
 }
 

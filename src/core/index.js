@@ -24,6 +24,7 @@ export {
   DEFAULT_PROFILE,
   dailyProfile,
   PLAYER_HIT_RADIUS,
+  DUAL_CENTERS,
 } from './game.js';
 export {
   summarize,

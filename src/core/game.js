@@ -5,17 +5,23 @@
  * правила видят одинаковые шаги. Благодаря этому партия воспроизводима —
  * один сид и одна последовательность нажатий дают один и тот же результат,
  * что необходимо для ежедневного челленджа.
+ *
+ * Режим DUAL: два независимых центра (L/R), свои кольца и спавн-потоки,
+ * общая энергия игрока.
  */
 
 import {
   CRUSH_RADIUS,
   DAILY_PROFILES,
+  DUAL_CENTER_X,
   ESCAPE_REMOVE_RADIUS,
   FIELD_RINGS_MAX,
+  GAME_MODE,
   MAX_FRAME_SEC,
   MIN_RING_GAP,
   PLAYER_RADIUS,
   PULSE_REACH,
+  SIDE,
   SPAWN_INTERVAL_JITTER_MAX,
   SPAWN_INTERVAL_JITTER_MIN,
   SPAWN_INTERVAL_MIN_SEC,
@@ -48,6 +54,12 @@ export const DEFAULT_PROFILE = Object.freeze({
 /** Игрок всегда стоит в центре; его угол задаёт только геометрию разрыва. */
 const PLAYER_ANGLE = 0;
 
+/** Мировые центры dual. */
+export const DUAL_CENTERS = Object.freeze({
+  [SIDE.L]: Object.freeze({ x: -DUAL_CENTER_X, y: 0 }),
+  [SIDE.R]: Object.freeze({ x: DUAL_CENTER_X, y: 0 }),
+});
+
 /**
  * Профиль ежедневного челленджа: ровно один на календарный день UTC.
  * Все игроки получают одинаковые пороги сложности, поэтому сравнение честное.
@@ -58,34 +70,116 @@ export function dailyProfile(timestampMs = Date.now()) {
   return DAILY_PROFILES[dayIndex(timestampMs) % DAILY_PROFILES.length];
 }
 
+/**
+ * Локальное состояние одной стороны dual (или единственной «полосы» single).
+ * @param {string|number} seed
+ * @returns {object}
+ */
+function createLane(seed) {
+  return {
+    random: mulberry32(seed),
+    spawnIndex: 0,
+    nextSpawnSec: 0,
+    fieldTarget: 1,
+    targetLevel: 1,
+    jaggedStreak: 0,
+  };
+}
+
 export class PulseGame {
   /**
    * @param {object} [options]
    * @param {string|number} [options.seed] сид партии
    * @param {typeof DEFAULT_PROFILE} [options.profile] пороги сложности
    * @param {boolean} [options.daily] отметить партию как ежедневную
+   * @param {string} [options.mode] GAME_MODE.SINGLE | GAME_MODE.DUAL
    */
-  constructor({ seed = 'pulse-free', profile = DEFAULT_PROFILE, daily = false } = {}) {
+  constructor({
+    seed = 'pulse-free',
+    profile = DEFAULT_PROFILE,
+    daily = false,
+    mode = GAME_MODE.SINGLE,
+  } = {}) {
     this.seed = seed;
     this.profile = profile;
     this.daily = daily;
+    this.mode = mode === GAME_MODE.DUAL ? GAME_MODE.DUAL : GAME_MODE.SINGLE;
 
-    this.random = mulberry32(seed);
     this.player = new Player();
     /** @type {import('./ring.js').Ring[]} */
     this.rings = [];
     this.phase = PHASE.READY;
-    this.spawnIndex = 0;
-    this.nextSpawnSec = 0;
-    /** Сколько угроз держим на поле (1…max); перебрасывается при пустом поле и смене LV. */
-    this.fieldTarget = 1;
-    this.targetLevel = 1;
-    /** Подряд идущие jagged — чтобы не забить поле одними дырками. */
-    this.jaggedStreak = 0;
     /** События шага: рендер и звук читают их, само ядро ничего не рисует. */
     this.events = [];
     /** Время, ещё не отыгранное целым шагом. */
     this.accumulatorSec = 0;
+
+    /** Single: одна полоса. Dual: L и R. */
+    this.lanes = this.buildLanes();
+  }
+
+  get isDual() {
+    return this.mode === GAME_MODE.DUAL;
+  }
+
+  /** @returns {Record<string, object>} */
+  buildLanes() {
+    if (this.isDual) {
+      return {
+        [SIDE.L]: createLane(`${this.seed}|L`),
+        [SIDE.R]: createLane(`${this.seed}|R`),
+      };
+    }
+    return { _: createLane(this.seed) };
+  }
+
+  /** Совместимость: PRNG single (и тесты, читающие game.random). */
+  get random() {
+    return this.lanes._?.random ?? this.lanes[SIDE.L].random;
+  }
+
+  set random(value) {
+    if (this.lanes._) this.lanes._.random = value;
+  }
+
+  get spawnIndex() {
+    return this.lanes._?.spawnIndex ?? 0;
+  }
+
+  set spawnIndex(value) {
+    if (this.lanes._) this.lanes._.spawnIndex = value;
+  }
+
+  get nextSpawnSec() {
+    return this.lanes._?.nextSpawnSec ?? 0;
+  }
+
+  set nextSpawnSec(value) {
+    if (this.lanes._) this.lanes._.nextSpawnSec = value;
+  }
+
+  get fieldTarget() {
+    return this.lanes._?.fieldTarget ?? this.lanes[SIDE.L]?.fieldTarget ?? 1;
+  }
+
+  set fieldTarget(value) {
+    if (this.lanes._) this.lanes._.fieldTarget = value;
+  }
+
+  get targetLevel() {
+    return this.lanes._?.targetLevel ?? this.lanes[SIDE.L]?.targetLevel ?? 1;
+  }
+
+  set targetLevel(value) {
+    if (this.lanes._) this.lanes._.targetLevel = value;
+  }
+
+  get jaggedStreak() {
+    return this.lanes._?.jaggedStreak ?? 0;
+  }
+
+  set jaggedStreak(value) {
+    if (this.lanes._) this.lanes._.jaggedStreak = value;
   }
 
   /** Секунды партии — то, что видит игрок в HUD. */
@@ -106,10 +200,12 @@ export class PulseGame {
 
   /**
    * Пауза до следующего спавна: база × разброс от сида.
+   * @param {string} [laneKey]
    * @returns {number}
    */
-  rollSpawnDelay() {
-    const factor = rangeBetween(this.random, SPAWN_INTERVAL_JITTER_MIN, SPAWN_INTERVAL_JITTER_MAX);
+  rollSpawnDelay(laneKey = '_') {
+    const lane = this.lanes[laneKey] ?? this.lanes._;
+    const factor = rangeBetween(lane.random, SPAWN_INTERVAL_JITTER_MIN, SPAWN_INTERVAL_JITTER_MAX);
     const floor = SPAWN_INTERVAL_MIN_SEC * 0.55;
     return Math.max(floor, this.spawnIntervalSec * factor);
   }
@@ -129,24 +225,50 @@ export class PulseGame {
     return Math.min(FIELD_RINGS_MAX, this.level + 1);
   }
 
-  /** Живые угрозы (отбитые улетают отдельно и не считаются). */
-  activeRings() {
-    return this.rings.filter((ring) => !ring.pushed);
+  /**
+   * Мировой центр стороны (или origin для single).
+   * @param {string|null|undefined} side
+   * @returns {{x: number, y: number}}
+   */
+  centerOf(side) {
+    if (!this.isDual || !side) return { x: 0, y: 0 };
+    return DUAL_CENTERS[side] ?? { x: 0, y: 0 };
   }
 
-  /** Случайная цель заполнения поля: целое от 1 до maxFieldRings. */
-  rollFieldTarget() {
+  /**
+   * Живые угрозы (отбитые улетают отдельно и не считаются).
+   * @param {string|null} [side] фильтр стороны dual
+   */
+  activeRings(side = null) {
+    return this.rings.filter((ring) => {
+      if (ring.pushed) return false;
+      if (side && ring.side !== side) return false;
+      return true;
+    });
+  }
+
+  /**
+   * Случайная цель заполнения поля: целое от 1 до maxFieldRings.
+   * @param {string} [laneKey]
+   */
+  rollFieldTarget(laneKey = '_') {
+    const lane = this.lanes[laneKey] ?? this.lanes._;
     const max = this.maxFieldRings;
-    return Math.min(max, Math.floor(rangeBetween(this.random, 1, max + 1)));
+    return Math.min(max, Math.floor(rangeBetween(lane.random, 1, max + 1)));
   }
 
   /**
    * Можно ли добавить кольцо с края: есть слот и внешнее уже ушло внутрь на MIN_RING_GAP.
+   * @param {string|null} [side]
    * @returns {boolean}
    */
-  canSpawnRing() {
-    const active = this.activeRings();
-    if (active.length >= this.fieldTarget) return false;
+  canSpawnRing(side = null) {
+    const laneKey = this.isDual ? side : '_';
+    const lane = this.lanes[laneKey];
+    if (!lane) return false;
+
+    const active = this.activeRings(this.isDual ? side : null);
+    if (active.length >= lane.fieldTarget) return false;
     if (active.length === 0) return true;
     const outer = Math.max(...active.map((ring) => ring.radius));
     return outer <= SPAWN_RADIUS - MIN_RING_GAP;
@@ -161,21 +283,26 @@ export class PulseGame {
       fieldTarget: this.fieldTarget,
       jagged: this.profile.jaggedTimeSec,
       magnet: this.profile.magnetTimeSec,
+      mode: this.mode,
     };
   }
 
-  /** Начать новую партию с тем же сидом. */
+  /** Начать новую партию с тем же сидом (и режимом). */
   start() {
-    this.random = mulberry32(this.seed);
+    this.lanes = this.buildLanes();
     this.player = new Player();
     this.rings = [];
-    this.spawnIndex = 0;
-    this.nextSpawnSec = 0;
-    this.targetLevel = 1;
-    this.fieldTarget = this.rollFieldTarget();
-    this.jaggedStreak = 0;
     this.accumulatorSec = 0;
     this.events = [];
+
+    if (this.isDual) {
+      for (const key of [SIDE.L, SIDE.R]) {
+        this.lanes[key].fieldTarget = this.rollFieldTarget(key);
+      }
+    } else {
+      this.lanes._.fieldTarget = this.rollFieldTarget('_');
+    }
+
     this.phase = PHASE.PLAYING;
   }
 
@@ -194,22 +321,28 @@ export class PulseGame {
   }
 
   /**
-   * Игрок нажал единственную кнопку.
-   * @returns {boolean} ушёл ли импульс; false — энергии не хватило
+   * Импульс. В single — все кольца в reach; в dual — только сторона `side`.
+   * @param {string} [side] 'L' | 'R' (обязателен в dual)
+   * @returns {boolean} ушёл ли импульс; false — энергии не хватило / неверная сторона
    */
-  pulse() {
+  pulse(side) {
     if (this.phase !== PHASE.PLAYING) return false;
+
+    if (this.isDual) {
+      if (side !== SIDE.L && side !== SIDE.R) return false;
+    }
+
     if (!this.player.spendPulse()) {
-      this.events.push({ type: 'weak', energy: this.player.energy });
+      this.events.push({ type: 'weak', energy: this.player.energy, side: side ?? null });
       return false;
     }
 
     let pushed = 0;
-    // Геометрия разрушенных колец уезжает в событие: рендер рисует взрыв,
-    // не заглядывая в живые кольца и не влияя на правила.
     const burst = [];
+    const center = this.centerOf(side);
 
     for (const ring of this.rings) {
+      if (this.isDual && ring.side !== side) continue;
       if (ring.radius > PULSE_REACH) continue;
       if (ring.push() !== 'pushed') continue;
 
@@ -221,6 +354,9 @@ export class PulseGame {
         angle: ring.angle,
         gapAngle: ring.gapAngle,
         thickness: ring.thickness,
+        side: ring.side,
+        ox: center.x,
+        oy: center.y,
       });
     }
 
@@ -230,25 +366,34 @@ export class PulseGame {
       burst,
       energy: this.player.energy,
       multiplier: this.player.multiplier,
+      side: side ?? null,
+      ox: center.x,
+      oy: center.y,
     });
 
-    // Сразу следующее с края после отбоя — даже если слоты ещё «плотные».
-    this.nextSpawnSec = 0;
-    if (pushed > 0 && this.activeRings().length < FIELD_RINGS_MAX) {
-      this.spawn();
-      this.nextSpawnSec = this.rollSpawnDelay();
-    } else if (this.activeRings().length === 0) {
-      this.refillField(1);
+    if (this.isDual) {
+      const lane = this.lanes[side];
+      lane.nextSpawnSec = 0;
+      if (pushed > 0 && this.activeRings(side).length < FIELD_RINGS_MAX) {
+        this.spawn(side);
+        lane.nextSpawnSec = this.rollSpawnDelay(side);
+      } else if (this.activeRings(side).length === 0) {
+        this.refillField(1, side);
+      }
+    } else {
+      this.nextSpawnSec = 0;
+      if (pushed > 0 && this.activeRings().length < FIELD_RINGS_MAX) {
+        this.spawn();
+        this.nextSpawnSec = this.rollSpawnDelay('_');
+      } else if (this.activeRings().length === 0) {
+        this.refillField(1);
+      }
     }
     return true;
   }
 
   /**
    * Прогнать симуляцию за прошедшее время.
-   *
-   * Длинные пропуски (вкладка была свёрнута) ограничиваются, чтобы игра не
-   * проскочила кольца рывком и не убила игрока без его участия.
-   *
    * @param {number} deltaSec время с предыдущего вызова
    * @returns {Array<object>} события, случившиеся за это время
    */
@@ -283,99 +428,147 @@ export class PulseGame {
     for (const ring of this.rings) ring.update(dt);
 
     this.updateFieldTarget();
-    this.nextSpawnSec -= dt;
-    this.refillField();
+
+    if (this.isDual) {
+      for (const side of [SIDE.L, SIDE.R]) {
+        this.lanes[side].nextSpawnSec -= dt;
+        this.refillField(FIELD_RINGS_MAX, side);
+      }
+    } else {
+      this.nextSpawnSec -= dt;
+      this.refillField();
+    }
 
     this.resolveContacts();
 
-    // Отбитое кольцо удаляется, едва покинув кадр: держать его в массиве
-    // до центра незачем — оно уже не угроза и только копило бы объекты.
     this.rings = this.rings.filter((ring) => {
       if (ring.pushed) return ring.radius < ESCAPE_REMOVE_RADIUS;
       return ring.radius > -0.08;
     });
 
-    // После удаления crush/escape снова добираем поле — экран не пустеет.
-    if (this.activeRings().length === 0 && this.phase === PHASE.PLAYING) {
-      this.nextSpawnSec = 0;
-      this.refillField(1);
+    if (this.phase === PHASE.PLAYING) {
+      if (this.isDual) {
+        for (const side of [SIDE.L, SIDE.R]) {
+          if (this.activeRings(side).length === 0) {
+            this.lanes[side].nextSpawnSec = 0;
+            this.refillField(1, side);
+          }
+        }
+      } else if (this.activeRings().length === 0) {
+        this.nextSpawnSec = 0;
+        this.refillField(1);
+      }
     }
   }
 
   /** При смене LV перебрасываем цель заполнения под новый потолок. */
   updateFieldTarget() {
+    if (this.isDual) {
+      for (const side of [SIDE.L, SIDE.R]) {
+        const lane = this.lanes[side];
+        if (this.level === lane.targetLevel) continue;
+        lane.targetLevel = this.level;
+        lane.fieldTarget = this.rollFieldTarget(side);
+      }
+      return;
+    }
     if (this.level === this.targetLevel) return;
     this.targetLevel = this.level;
-    this.fieldTarget = this.rollFieldTarget();
+    this.fieldTarget = this.rollFieldTarget('_');
   }
 
   /**
    * Добить поле до цели / гарантировать ≥1 угрозу.
    * @param {number} [maxSpawns] лимит за вызов (после импульса — одно)
+   * @param {string|null} [side] сторона dual
    */
-  refillField(maxSpawns = FIELD_RINGS_MAX) {
+  refillField(maxSpawns = FIELD_RINGS_MAX, side = null) {
+    const laneKey = this.isDual ? side : '_';
+    const lane = this.lanes[laneKey];
+    if (!lane) return;
+
     let spawned = 0;
-    while (spawned < maxSpawns && this.canSpawnRing()) {
-      const active = this.activeRings().length;
-      // Пустое поле — всегда сразу; иначе ждём интервал (ритм с джиттером).
-      if (active > 0 && this.nextSpawnSec > 0) break;
-      this.spawn();
+    while (spawned < maxSpawns && this.canSpawnRing(this.isDual ? side : null)) {
+      const active = this.activeRings(this.isDual ? side : null).length;
+      if (active > 0 && lane.nextSpawnSec > 0) break;
+      this.spawn(this.isDual ? side : null);
       spawned += 1;
-      this.nextSpawnSec = this.rollSpawnDelay();
+      lane.nextSpawnSec = this.rollSpawnDelay(laneKey);
     }
   }
 
-  /** Добавить одно одиночное кольцо с края. */
-  spawn() {
-    if (this.activeRings().length === 0) {
-      this.fieldTarget = this.rollFieldTarget();
+  /**
+   * Добавить одно одиночное кольцо с края.
+   * @param {string|null} [side]
+   */
+  spawn(side = null) {
+    const laneKey = this.isDual ? side : '_';
+    const lane = this.lanes[laneKey];
+    if (!lane) return;
+
+    if (this.activeRings(this.isDual ? side : null).length === 0) {
+      lane.fieldTarget = this.rollFieldTarget(laneKey);
     }
 
     const ring = createRing({
-      random: this.random,
-      index: this.spawnIndex,
+      random: lane.random,
+      index: lane.spawnIndex,
       elapsedSec: this.elapsedSec,
       speedScale: this.speedScale,
       profile: this.profile,
+      side: this.isDual ? side : null,
     });
 
-    // В фазе jagged не даём серии из 3+ рваных подряд — иначе на поле остаются одни дырки.
     const inJaggedPhase =
       this.elapsedSec >= this.profile.jaggedTimeSec &&
       this.elapsedSec < this.profile.magnetTimeSec;
-    if (inJaggedPhase && ring.kind === RING_KIND.JAGGED && this.jaggedStreak >= 2) {
+    if (inJaggedPhase && ring.kind === RING_KIND.JAGGED && lane.jaggedStreak >= 2) {
       ring.kind = RING_KIND.PLAIN;
       ring.gapAngle = null;
       ring.spin = 0;
-      this.jaggedStreak = 0;
+      lane.jaggedStreak = 0;
     } else if (ring.kind === RING_KIND.JAGGED) {
-      this.jaggedStreak += 1;
+      lane.jaggedStreak += 1;
     } else {
-      this.jaggedStreak = 0;
+      lane.jaggedStreak = 0;
     }
 
     this.rings.push(ring);
-    this.spawnIndex += 1;
-    this.events.push({ type: 'spawn', kind: ring.kind, id: ring.id });
+    lane.spawnIndex += 1;
+    this.events.push({ type: 'spawn', kind: ring.kind, id: ring.id, side: ring.side });
   }
 
   /** Разобраться с кольцами у центра: рваные всегда безопасны, plain бьёт. */
   resolveContacts() {
     for (const ring of this.rings) {
-      // Каждое кольцо обрабатывается ровно один раз: без метки оно успевало
-      // ударить второй раз после окончания неуязвимости, пока оставалось в центре.
       if (ring.resolved) continue;
       if (ring.radius > CRUSH_RADIUS) continue;
 
       ring.resolved = true;
-      // Рваное никогда не ранит — даже при «попадании в обод».
       const throughGap = ring.kind === RING_KIND.JAGGED || ring.isCleanPass(PLAYER_ANGLE);
       const result = this.player.resolvePass(throughGap);
+      const center = this.centerOf(ring.side);
 
       if (result === 'clean') {
-        this.events.push({ type: 'clean', id: ring.id, multiplier: this.player.multiplier, kind: ring.kind });
+        this.events.push({
+          type: 'clean',
+          id: ring.id,
+          multiplier: this.player.multiplier,
+          kind: ring.kind,
+          side: ring.side,
+          ox: center.x,
+          oy: center.y,
+        });
       } else if (result === 'crushed') {
-        this.events.push({ type: 'hit', id: ring.id, energy: this.player.energy, kind: ring.kind });
+        this.events.push({
+          type: 'hit',
+          id: ring.id,
+          energy: this.player.energy,
+          kind: ring.kind,
+          side: ring.side,
+          ox: center.x,
+          oy: center.y,
+        });
       }
     }
 
@@ -395,12 +588,29 @@ export class PulseGame {
     return false;
   }
 
+  /**
+   * Подсказка разрыва по сторонам (dual HUD/рендер).
+   * @returns {{L: boolean, R: boolean}|boolean}
+   */
+  get gapAlignedBySide() {
+    if (!this.isDual) return this.gapAligned;
+    const result = { [SIDE.L]: false, [SIDE.R]: false };
+    for (const side of [SIDE.L, SIDE.R]) {
+      for (const ring of this.rings) {
+        if (ring.side !== side) continue;
+        if (ring.gapAngle === null) continue;
+        if (ring.radius > PULSE_REACH * 1.5) continue;
+        result[side] = ring.isCleanPass(PLAYER_ANGLE);
+        break;
+      }
+    }
+    return result;
+  }
+
   /** Партия окончена: энергия кончилась. */
   finish() {
     if (this.phase === PHASE.OVER) return;
     this.phase = PHASE.OVER;
-    // Смерть фиксируется ровно на нуле: иначе между ударом и сменой фазы
-    // успевает набежать восстановление и HUD показывает остаток.
     this.player.energy = 0;
     this.player.alive = false;
     this.events.push({
@@ -409,20 +619,26 @@ export class PulseGame {
       hits: this.player.hits,
       cleanDodges: this.player.cleanDodges,
       elapsedSec: this.elapsedSec,
+      mode: this.mode,
     });
   }
 
   /**
    * Снимок состояния для рендера и HUD.
-   *
-   * Возвращаются копии примитивов, а не ссылки на живые кольца: рендер
-   * не может случайно повлиять на правила.
-   *
    * @returns {object}
    */
   snapshot() {
+    const centers = this.isDual
+      ? {
+          [SIDE.L]: { ...DUAL_CENTERS[SIDE.L] },
+          [SIDE.R]: { ...DUAL_CENTERS[SIDE.R] },
+        }
+      : { C: { x: 0, y: 0 } };
+
     return {
       phase: this.phase,
+      mode: this.mode,
+      centers,
       elapsedSec: this.elapsedSec,
       score: this.score,
       level: this.level,
@@ -432,6 +648,7 @@ export class PulseGame {
       cleanDodges: this.player.cleanDodges,
       hits: this.player.hits,
       gapAligned: this.gapAligned,
+      gapAlignedBySide: this.gapAlignedBySide,
       rings: this.rings.map((ring) => ({
         id: ring.id,
         kind: ring.kind,
@@ -443,6 +660,7 @@ export class PulseGame {
         pulling: ring.pulling,
         pushed: ring.pushed,
         thickness: ring.thickness,
+        side: ring.side,
       })),
     };
   }

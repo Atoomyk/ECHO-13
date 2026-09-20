@@ -15,6 +15,7 @@ import {
   ENERGY_MAX,
   ENERGY_REGEN_PER_SEC,
   ESCAPE_REMOVE_RADIUS,
+  GAME_MODE,
   HIT_DAMAGE,
   IFRAME_SEC,
   PULSE_COST,
@@ -125,6 +126,7 @@ test('импульс отталкивает только близкие коль
     ring.push = () => {
       if (ring === near) ring.pushCalled = true;
       else ring.pushCount += 1;
+      return 'pushed';
     };
   }
 
@@ -724,4 +726,54 @@ test('повторный импульс по тому же кольцу не д�
   assert.equal(pulses[0].burst.length, 1);
   assert.equal(pulses[1].burst.length, 0, 'дважды одно кольцо не взрывается');
   assert.equal(ring.pushed, true);
+});
+
+/* ------------------------------------------------------------- dual mode */
+
+test('dual: импульс L не отталкивает кольца R', () => {
+  const game = new PulseGame({ seed: 'dual-iso', mode: GAME_MODE.DUAL });
+  game.start();
+
+  game.rings = [];
+  game.spawn('L');
+  game.spawn('R');
+  const left = game.rings.find((r) => r.side === 'L');
+  const right = game.rings.find((r) => r.side === 'R');
+  assert.ok(left && right);
+  left.radius = PULSE_REACH - 0.05;
+  right.radius = PULSE_REACH - 0.05;
+
+  assert.equal(game.pulse('L'), true);
+  assert.equal(left.pushed, true);
+  assert.equal(right.pushed, false);
+});
+
+test('dual: импульс списывает общую энергию', () => {
+  const game = new PulseGame({ seed: 'dual-energy', mode: GAME_MODE.DUAL });
+  game.start();
+
+  const before = game.player.energy;
+  assert.equal(game.pulse('R'), true);
+  assert.ok(Math.abs(game.player.energy - (before - PULSE_COST)) < 1e-9);
+
+  assert.equal(game.pulse('L'), true);
+  assert.ok(Math.abs(game.player.energy - (before - 2 * PULSE_COST)) < 1e-9);
+});
+
+test('dual: стороны спавнят независимо', () => {
+  const game = new PulseGame({ seed: 'dual-spawn', mode: GAME_MODE.DUAL });
+  game.start();
+
+  run(game, 2);
+  const left = game.activeRings('L');
+  const right = game.activeRings('R');
+  assert.ok(left.length >= 1, 'слева должна быть угроза');
+  assert.ok(right.length >= 1, 'справа должна быть угроза');
+  assert.ok(left.every((r) => r.side === 'L'));
+  assert.ok(right.every((r) => r.side === 'R'));
+
+  const snap = game.snapshot();
+  assert.equal(snap.mode, GAME_MODE.DUAL);
+  assert.ok(snap.centers.L.x < 0);
+  assert.ok(snap.centers.R.x > 0);
 });

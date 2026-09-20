@@ -6,7 +6,25 @@
  */
 
 /** Номер версии правил. Меняется при правке баланса или формата сида. */
-export const RULES_VERSION = 7;
+export const RULES_VERSION = 10;
+
+/** Режимы партии: одиночный центр или два независимых (DUAL). */
+export const GAME_MODE = Object.freeze({
+  SINGLE: 'single',
+  DUAL: 'dual',
+});
+
+/** Стороны dual: левый и правый центр. */
+export const SIDE = Object.freeze({
+  L: 'L',
+  R: 'R',
+});
+
+/**
+ * Смещение центров dual по X (мир ≈ [-1, 1]).
+ * L = (−DUAL_CENTER_X, 0), R = (+DUAL_CENTER_X, 0).
+ */
+export const DUAL_CENTER_X = 1.2;
 
 /** Единица игрового поля. Мир — квадрат [-1, 1] по обеим осям, центр (0, 0). */
 export const WORLD_RADIUS = 1;

@@ -1,11 +1,12 @@
 /**
  * Ввод: мышь, тач, клавиатура и другие нажатия на кнопку.
  *
- * Вся PULSE — одна кнопка, поэтому модуль сводит всё разнообразие ввода
- * к двум событиям: «импульс» и «пауза». Он не знает о правилах игры.
+ * Single: всё сводится к «импульс» без стороны.
+ * Dual: pointerdown даёт сторону L/R (половина экрана / кнопка мыши).
  */
 
 import { PHASE } from '../core/game.js';
+import { SIDE } from '../core/constants.js';
 
 /** Пауза после касания, чтобы случайный второй тап не считался двойным нажатием. */
 const TAP_GUARD_MS = 120;
@@ -13,31 +14,59 @@ const TAP_GUARD_MS = 120;
 export class InputController {
   /**
    * @param {object} handlers
-   * @param {() => void} handlers.onPulse
+   * @param {(side?: string) => void} handlers.onPulse
    * @param {() => void} handlers.onPause
    * @param {() => void} handlers.onAnyKey — разбудить звук и снять стартовую заглушку
+   * @param {() => boolean} [handlers.isDual] — dual: резолвить сторону
    */
-  constructor({ onPulse, onPause, onAnyKey }) {
+  constructor({ onPulse, onPause, onAnyKey, isDual = () => false }) {
     this.onPulse = onPulse;
     this.onPause = onPause;
     this.onAnyKey = onAnyKey;
+    this.isDual = isDual;
     this.lastPulseAt = 0;
 
     this._boundPointer = this.handlePointer.bind(this);
     this._boundKey = this.handleKey.bind(this);
+    this._boundContext = this.handleContextMenu.bind(this);
   }
 
   /** Подписаться на все источники ввода. */
   attach(target) {
     this.target = target;
     target.addEventListener('pointerdown', this._boundPointer, { passive: false });
+    target.addEventListener('contextmenu', this._boundContext);
     window.addEventListener('keydown', this._boundKey);
   }
 
   /** Отписаться: вызывается при выгрузке, чтобы не оставлять слушателей. */
   detach() {
     this.target?.removeEventListener('pointerdown', this._boundPointer);
+    this.target?.removeEventListener('contextmenu', this._boundContext);
     window.removeEventListener('keydown', this._boundKey);
+  }
+
+  /** ПКМ не должен открывать меню браузера на игровом поле. */
+  handleContextMenu(event) {
+    event.preventDefault();
+  }
+
+  /**
+   * Сторона импульса: мышь — ЛКМ=L / ПКМ=R; тач — половина экрана.
+   * @param {PointerEvent} event
+   * @returns {string|undefined}
+   */
+  resolveSide(event) {
+    if (!this.isDual()) return undefined;
+
+    if (event.pointerType === 'mouse') {
+      if (event.button === 2) return SIDE.R;
+      return SIDE.L;
+    }
+
+    const rect = this.target.getBoundingClientRect();
+    const mid = rect.left + rect.width / 2;
+    return event.clientX < mid ? SIDE.L : SIDE.R;
   }
 
   /**
@@ -45,16 +74,18 @@ export class InputController {
    * @param {PointerEvent} event
    */
   handlePointer(event) {
-    // Не перехватываем нажатия по интерфейсу: кнопки меню должны работать.
     if (event.target instanceof Element && event.target.closest('[data-ui]')) return;
+
+    // В dual игнорируем среднюю кнопку; ЛКМ/ПКМ — стороны.
+    if (event.pointerType === 'mouse' && event.button !== 0 && event.button !== 2) return;
 
     event.preventDefault();
     this.onAnyKey?.();
-    this.firePulse(event.timeStamp);
+    this.firePulse(event.timeStamp, this.resolveSide(event));
   }
 
   /**
-   * Клавиатура: пробел и Enter — импульс, Esc — пауза.
+   * Клавиатура: пробел и Enter — импульс (в dual — левая сторона), Esc — пауза.
    * @param {KeyboardEvent} event
    */
   handleKey(event) {
@@ -62,10 +93,10 @@ export class InputController {
 
     const code = event.code;
     if (code === 'Space' || code === 'Enter' || code === 'NumpadEnter') {
-      // Пробел прокручивает страницу, если его не остановить.
       event.preventDefault();
       this.onAnyKey?.();
-      this.firePulse(event.timeStamp);
+      const side = this.isDual() ? SIDE.L : undefined;
+      this.firePulse(event.timeStamp, side);
       return;
     }
 
@@ -78,12 +109,13 @@ export class InputController {
   /**
    * Пропустить импульс, если он не является случайным дублем тапа.
    * @param {number} timestamp
+   * @param {string} [side]
    */
-  firePulse(timestamp) {
+  firePulse(timestamp, side) {
     const now = timestamp || Date.now();
     if (now - this.lastPulseAt < TAP_GUARD_MS) return;
     this.lastPulseAt = now;
-    this.onPulse?.();
+    this.onPulse?.(side);
   }
 }
 

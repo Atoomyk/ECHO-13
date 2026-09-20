@@ -99,8 +99,9 @@ export class Ring {
    * @param {number} [options.angle] фаза кольца
    * @param {number|null} [options.gapAngle] центр разрыва, null — кольцо сплошное
    * @param {number} [options.spin] угловая скорость разрыва
+   * @param {string|null} [options.side] сторона dual ('L'|'R'), null в single
    */
-  constructor({ kind, radius, speed, angle = 0, gapAngle = null, spin = 0 }) {
+  constructor({ kind, radius, speed, angle = 0, gapAngle = null, spin = 0, side = null }) {
     this.id = nextId;
     nextId += 1;
 
@@ -110,6 +111,8 @@ export class Ring {
     this.angle = angle;
     this.gapAngle = gapAngle;
     this.spin = spin;
+    /** @type {string|null} */
+    this.side = side;
     this.alive = true;
     /** Магнит уже начал тянуть — влияет на отрисовку и подсказки. */
     this.pulling = false;
@@ -273,9 +276,10 @@ export function aimGapAtPlayer(radius, speed, spin, playerAngle, leadSec) {
  * @param {number} options.elapsedSec сколько секунд идёт партия
  * @param {number} options.speedScale общий ускоритель прогрессии
  * @param {{jaggedTimeSec: number, magnetTimeSec: number}} options.profile
+ * @param {string|null} [options.side] сторона dual
  * @returns {Ring}
  */
-export function createRing({ random, index, elapsedSec, speedScale, profile }) {
+export function createRing({ random, index, elapsedSec, speedScale, profile, side = null }) {
   // База от времени/LV (+ speedScale), не от index — импульсы не разгоняют очередь.
   const baseTravel = travelSecondsFor(elapsedSec) / Math.max(0.2, speedScale);
   const jitter = rangeBetween(random, TRAVEL_JITTER_MIN, TRAVEL_JITTER_MAX);
@@ -304,5 +308,6 @@ export function createRing({ random, index, elapsedSec, speedScale, profile }) {
     angle: rangeBetween(random, 0, Math.PI * 2),
     gapAngle,
     spin,
+    side,
   });
 }
