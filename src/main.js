@@ -71,6 +71,7 @@ const el = {
   name: document.getElementById('input-name'),
   soundBtn: document.getElementById('btn-sound'),
   toast: document.getElementById('toast'),
+  rotateGate: document.getElementById('rotate-gate'),
 };
 
 /* ------------------------------------------------------------- утилиты */
@@ -163,6 +164,8 @@ function startGame({ daily = false } = {}) {
   sound.unlock();
   ticking = false;
   tickAccumulator = 0;
+  requestLandscape();
+  updateOrientationGate();
 }
 
 /** Вернуться в главное меню. */
@@ -170,11 +173,13 @@ function goToMenu() {
   // READY, а не PAUSED: иначе Esc из меню снова запускал брошенную партию.
   game.phase = PHASE.READY;
   usingDual = false;
+  pausedForRotate = false;
   sound.stopAmbient();
   ticking = false;
   showPanel(el.menu);
   el.tapHint.hidden = true;
   updateBestLabels();
+  updateOrientationGate();
 }
 
 /** Поставить партию на паузу и показать панель. */
@@ -476,18 +481,67 @@ async function openScores(daily) {
 
 /* ------------------------------------------------------------- запуск */
 
+/** Нужен ли ландшафт: узкий/тач-экран в портрете. */
+function needsLandscape() {
+  const portrait = window.innerHeight > window.innerWidth;
+  if (!portrait) return false;
+  const touch =
+    window.matchMedia('(pointer: coarse)').matches ||
+    navigator.maxTouchPoints > 0;
+  const narrow = Math.min(window.innerWidth, window.innerHeight) <= 920;
+  return touch || narrow;
+}
+
+/** Попытка lock — работает не везде (часто нужен fullscreen / жест). */
+function requestLandscape() {
+  const orientation = screen.orientation;
+  if (!orientation || typeof orientation.lock !== 'function') return;
+  orientation.lock('landscape').catch(() => {
+    /* браузер отказал — остаётся оверлей */
+  });
+}
+
+/** Пауза партии, пока телефон в портрете (оверлей закрывает ввод). */
+let pausedForRotate = false;
+
+function updateOrientationGate() {
+  const need = needsLandscape();
+  if (el.rotateGate) el.rotateGate.hidden = !need;
+
+  if (need) {
+    if (game.phase === PHASE.PLAYING) {
+      game.pause();
+      sound.stopAmbient();
+      pausedForRotate = true;
+    }
+    return;
+  }
+
+  if (pausedForRotate && game.phase === PHASE.PAUSED && el.pause.hidden) {
+    game.resume();
+    if (ticking) sound.startAmbient();
+    pausedForRotate = false;
+  }
+}
+
 /** Подстроить поле под размер окна и учесть системные настройки анимации. */
 function handleResize() {
   renderer.resize();
+  updateOrientationGate();
 }
 
 window.addEventListener('resize', handleResize);
-window.addEventListener('orientationchange', handleResize);
+window.addEventListener('orientationchange', () => {
+  window.setTimeout(handleResize, 120);
+});
 
 // Уважаем системную настройку «меньше движения».
 const motionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
 renderer.setReducedMotion(motionQuery.matches);
 motionQuery.addEventListener('change', (event) => renderer.setReducedMotion(event.matches));
+
+const portraitQuery = window.matchMedia('(orientation: portrait)');
+portraitQuery.addEventListener('change', updateOrientationGate);
 
 // Возврат во вкладку не должен давать огромный пропуск времени.
 document.addEventListener('visibilitychange', () => {
@@ -516,6 +570,7 @@ function boot() {
   input.attach(document.getElementById('tap-surface'));
   showPanel(el.menu);
   updateBestLabels();
+  updateOrientationGate();
 
   running = true;
   lastFrameMs = performance.now();
