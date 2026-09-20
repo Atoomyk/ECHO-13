@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+  <meta name="theme-color" content="#000000" />
+  <meta name="description" content="PULSE — минималистичная аркада: одна кнопка, сжимающиеся кольца, ежедневный челлендж." />
+  <title>PULSE</title>
+  <link rel="stylesheet" href="./styles.css" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23000'/%3E%3Ccircle cx='16' cy='16' r='5' fill='%23fff'/%3E%3C/svg%3E" />
+</head>
+<body>
+  <!-- Игровое поле. Canvas занимает весь экран, интерфейс лежит поверх ним. -->
+  <main class="stage" id="stage">
+    <canvas id="field" class="stage__canvas" aria-hidden="true"></canvas>
+
+    <!-- Область нажатия: единственная кнопка игры. -->
+    <div class="stage__tap" id="tap-surface" aria-hidden="true"></div>
+
+    <!-- HUD: счёт, энергия, время, пауза. -->
+    <header class="hud" id="hud" data-ui hidden>
+      <div class="hud__row">
+        <span class="hud__label">СЧЁТ</span>
+        <span class="hud__value" id="hud-score">0</span>
+      </div>
+      <div class="hud__row">
+        <span class="hud__label">ВРЕМЯ</span>
+        <span class="hud__value" id="hud-time">0.0</span>
+      </div>
+      <div class="hud__row hud__row--mult">
+        <span class="hud__label">×</span>
+        <span class="hud__value" id="hud-mult">1.00</span>
+      </div>
+      <div class="hud__energy" role="progressbar" aria-label="Энергия" aria-valuemin="0" aria-valuemax="100" id="hud-energy-bar">
+        <div class="hud__energy-fill" id="hud-energy"></div>
+      </div>
+      <div class="hud__toolbar">
+        <p class="hud__mode" id="hud-mode"></p>
+        <button class="hud__pause" id="btn-pause" type="button" aria-label="Пауза">ПАУЗА</button>
+      </div>
+    </header>
+
+    <!-- Главное меню. -->
+    <section class="panel panel--menu" id="menu" data-ui>
+      <h1 class="logo">PULSE<span class="logo__tick">·</span></h1>
+      <p class="tagline">одна кнопка · сжимающиеся кольца</p>
+
+      <div class="rules">
+        <p><b>Нажми</b> — импульс отталкивает близкие кольца.</p>
+        <p><b>Не жми</b> — энергия восстанавливается.</p>
+        <p><b>Рваное кольцо</b> — пропусти его через разрыв, это повышает множитель.</p>
+      </div>
+
+      <div class="menu-buttons">
+        <button class="btn btn--primary" id="btn-play" type="button">ИГРАТЬ</button>
+        <button class="btn" id="btn-daily" type="button">ЧЕЛЛЕНДЖ ДНЯ</button>
+        <button class="btn btn--ghost" id="btn-scores" type="button">РЕКОРДЫ</button>
+      </div>
+
+      <div class="settings">
+        <label class="field">
+          <span class="field__label">ИМЯ</span>
+          <input class="field__input" id="input-name" type="text" maxlength="24" placeholder="аноним" autocomplete="off" />
+        </label>
+        <button class="toggle" id="btn-sound" type="button" aria-pressed="true">ЗВУК: ВКЛ</button>
+      </div>
+
+      <p class="records">
+        ЛУЧШИЙ: <span id="best-score">0</span> · ДЕНЬ: <span id="best-daily">0</span>
+      </p>
+      <p class="hint">пробел / клик / тап — импульс · пауза — Esc или кнопка</p>
+    </section>
+
+    <!-- Таблица рекордов. -->
+    <section class="panel panel--scores" id="scores" data-ui hidden>
+      <h2 class="panel__title" id="scores-title">РЕКОРДЫ</h2>
+      <ol class="scores" id="scores-list"></ol>
+      <p class="scores__empty" id="scores-empty">пока никого — стань первым</p>
+      <button class="btn btn--ghost" id="btn-scores-back" type="button">НАЗАД</button>
+    </section>
+
+    <!-- Пауза. -->
+    <section class="panel panel--pause" id="pause" data-ui hidden>
+      <h2 class="panel__title">ПАУЗА</h2>
+      <p class="tagline">игра ждёт тебя</p>
+      <div class="menu-buttons">
+        <button class="btn btn--primary" id="btn-resume" type="button">ПРОДОЛЖИТЬ</button>
+        <button class="btn btn--ghost" id="btn-quit" type="button">В МЕНЮ</button>
+      </div>
+    </section>
+
+    <!-- Экран проигрыша. -->
+    <section class="panel panel--over" id="over" data-ui hidden>
+      <h2 class="panel__title" id="over-title">ИГРА ОКОНЧЕНА</h2>
+      <div class="result">
+        <div class="result__row">
+          <span class="result__label">СЧЁТ</span>
+          <span class="result__value" id="over-score">0</span>
+        </div>
+        <div class="result__row">
+          <span class="result__label">ВРЕМЯ</span>
+          <span class="result__value" id="over-time">0.0 с</span>
+        </div>
+        <div class="result__row">
+          <span class="result__label">ЧИСТЫЕ</span>
+          <span class="result__value" id="over-clean">0</span>
+        </div>
+        <div class="result__row">
+          <span class="result__label">ОШИБКИ</span>
+          <span class="result__value" id="over-hits">0</span>
+        </div>
+      </div>
+      <pre class="grid" id="over-grid" aria-label="Сетка результата"></pre>
+      <p class="record-badge" id="over-record" hidden>НОВЫЙ РЕКОРД</p>
+      <div class="menu-buttons">
+        <button class="btn btn--primary" id="btn-again" type="button">ЕЩЁ РАЗ</button>
+        <button class="btn" id="btn-share" type="button">СКОПИРОВАТЬ</button>
+        <button class="btn btn--ghost" id="btn-menu" type="button">В МЕНЮ</button>
+      </div>
+    </section>
+
+    <!-- Стартовая подсказка: первое нажатие объясняет всё. -->
+    <div class="tap-hint" id="tap-hint" data-ui>
+      <span class="tap-hint__pulse"></span>
+      НАЖМИ, ЧТОБЫ ИМПУЛЬС
+    </div>
+
+    <div class="toast" id="toast" data-ui hidden role="status"></div>
+  </main>
+
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>

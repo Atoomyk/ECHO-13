@@ -1,0 +1,36 @@
+[Unit]
+Description=PULSE — аркада и API рекордов
+Documentation=file:/opt/pulse/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pulse
+Group=pulse
+WorkingDirectory=/opt/pulse
+EnvironmentFile=/etc/pulse/pulse.env
+ExecStart=/usr/bin/node /opt/pulse/server/server.js
+Restart=always
+RestartSec=2
+
+# Один процесс Node не должен съедать память сервера (1 vCPU / 768 МБ).
+MemoryMax=256M
+CPUQuota=80%
+TasksMax=64
+
+# Сервису нужен только собственный каталог: база и логи.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/pulse /var/log/pulse
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+StandardOutput=append:/var/log/pulse/pulse.log
+StandardError=append:/var/log/pulse/pulse.log
+
+[Install]
+WantedBy=multi-user.target
