@@ -19,6 +19,7 @@ import {
   validateScore,
 } from './app.js';
 import { loadConfig, applyEnvFile } from './config.js';
+import { SiteGate, clientIp } from './gate.js';
 import { serveStatic } from './static.js';
 import { makeEntry, openStore } from './store.js';
 
@@ -27,6 +28,7 @@ const projectRoot = path.resolve(here, '..');
 
 applyEnvFile(path.join(projectRoot, '.env'));
 const config = loadConfig();
+const gate = new SiteGate({ password: config.sitePassword });
 
 /**
  * Ответ в формате JSON.
@@ -102,6 +104,42 @@ async function handleApi(req, res, url, store) {
 
   if (req.method === 'GET' && route === '/api/health') {
     sendJson(res, 200, { ok: true, store: store.kind, env: config.env, mode: 'pulse' });
+    return true;
+  }
+
+  if (req.method === 'GET' && route === '/api/gate') {
+    const ip = clientIp(req);
+    const status = gate.status(ip);
+    sendJson(res, 200, {
+      enabled: gate.enabled,
+      locked: status.locked,
+      retryAfterSec: status.retryAfterSec,
+    });
+    return true;
+  }
+
+  if (req.method === 'POST' && route === '/api/gate') {
+    const raw = await readBody(req);
+    let parsed;
+    try {
+      parsed = JSON.parse(raw || '{}');
+    } catch {
+      sendJson(res, 400, { error: 'bad_json' });
+      return true;
+    }
+
+    const ip = clientIp(req);
+    const password = typeof parsed.password === 'string' ? parsed.password : '';
+    const token = typeof parsed.token === 'string' ? parsed.token : '';
+
+    if (token) {
+      const ok = gate.verify(token);
+      sendJson(res, ok ? 200 : 401, ok ? { ok: true } : { error: 'bad_token' });
+      return true;
+    }
+
+    const result = gate.unlock(ip, password);
+    sendJson(res, 200, { ok: true, token: result.token });
     return true;
   }
 

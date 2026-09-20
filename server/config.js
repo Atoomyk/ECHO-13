@@ -41,7 +41,7 @@ export function applyEnvFile(filePath, env = process.env) {
 
 /**
  * @param {NodeJS.ProcessEnv} [env]
- * @returns {{port: number, host: string, env: string, dbPath: string, allowedOrigins: string[], isProduction: boolean}}
+ * @returns {{port: number, host: string, env: string, dbPath: string, allowedOrigins: string[], isProduction: boolean, sitePassword: string}}
  */
 export function loadConfig(env = process.env) {
   const port = Number.parseInt(env.PULSE_PORT ?? '', 10);
@@ -57,5 +57,7 @@ export function loadConfig(env = process.env) {
       .map((origin) => origin.trim())
       .filter(Boolean),
     isProduction: envName === 'production',
+    /** Пароль входа на сайт; пустая строка / отсутствие — gate выключен. */
+    sitePassword: env.PULSE_SITE_PASSWORD ?? '',
   };
 }

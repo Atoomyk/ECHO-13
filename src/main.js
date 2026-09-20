@@ -10,16 +10,22 @@ import { GAME_MODE, RULES_VERSION, SIDE } from './core/constants.js';
 import { dayIndex, dailySeed } from './core/random.js';
 import { shareGrid, shareText, summarize } from './core/result.js';
 import {
+  clearGateToken,
   fetchDaily,
+  fetchGateStatus,
   fetchLeaderboard,
   getBest,
   getBestDaily,
+  getGateToken,
   getPlayerName,
   getSoundEnabled,
   saveBest,
+  setGateToken,
   setPlayerName,
   setSoundEnabled,
   submitScore,
+  unlockGate,
+  verifyGateToken,
 } from './ui/api.js';
 import { InputController } from './ui/input.js';
 import { Renderer } from './ui/render.js';
@@ -73,6 +79,10 @@ const el = {
   soundBtn: document.getElementById('btn-sound'),
   toast: document.getElementById('toast'),
   rotateGate: document.getElementById('rotate-gate'),
+  siteGate: document.getElementById('site-gate'),
+  siteGateForm: document.getElementById('site-gate-form'),
+  siteGatePassword: document.getElementById('site-gate-password'),
+  siteGateError: document.getElementById('site-gate-error'),
 };
 
 /* ------------------------------------------------------------- утилиты */
@@ -585,6 +595,87 @@ function boot() {
   running = true;
   lastFrameMs = performance.now();
   window.requestAnimationFrame(frame);
+
+  void runSiteGate();
+}
+
+/**
+ * Показать ошибку на форме входа.
+ * @param {string} message
+ */
+function setGateError(message) {
+  if (!el.siteGateError) return;
+  if (!message) {
+    el.siteGateError.hidden = true;
+    el.siteGateError.textContent = '';
+    return;
+  }
+  el.siteGateError.hidden = false;
+  el.siteGateError.textContent = message;
+}
+
+function hideSiteGate() {
+  if (el.siteGate) el.siteGate.hidden = true;
+}
+
+/**
+ * Вход по паролю: токен вкладки или форма.
+ * @returns {Promise<void>}
+ */
+async function runSiteGate() {
+  if (!el.siteGate || !el.siteGateForm) {
+    hideSiteGate();
+    return;
+  }
+
+  const status = await fetchGateStatus();
+  if (status && status.enabled === false) {
+    hideSiteGate();
+    return;
+  }
+
+  const existing = getGateToken();
+  if (existing && (await verifyGateToken(existing))) {
+    hideSiteGate();
+    return;
+  }
+  if (existing) clearGateToken();
+
+  el.siteGate.hidden = false;
+  setGateError('');
+  if (status?.locked) {
+    setGateError(`слишком много попыток — подождите ${status.retryAfterSec || 300} с`);
+  }
+
+  el.siteGateForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const password = el.siteGatePassword?.value ?? '';
+    const submitBtn = el.siteGateForm.querySelector('button[type="submit"]');
+    if (submitBtn instanceof HTMLButtonElement) submitBtn.disabled = true;
+    setGateError('');
+
+    const result = await unlockGate(password);
+    if (submitBtn instanceof HTMLButtonElement) submitBtn.disabled = false;
+
+    if (result.ok) {
+      setGateToken(result.token);
+      hideSiteGate();
+      el.siteGatePassword.value = '';
+      return;
+    }
+
+    if (result.error === 'locked') {
+      setGateError(result.message || 'слишком много попыток — подождите 5 минут');
+    } else if (result.error === 'bad_password') {
+      setGateError('неверный пароль');
+    } else {
+      setGateError(result.message || 'не удалось войти');
+    }
+    el.siteGatePassword?.focus();
+    el.siteGatePassword?.select();
+  });
+
+  el.siteGatePassword?.focus();
 }
 
 boot();

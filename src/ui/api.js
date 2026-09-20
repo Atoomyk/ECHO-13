@@ -156,3 +156,90 @@ export async function fetchDaily() {
     return null;
   }
 }
+
+const KEY_GATE_TOKEN = 'echo.gate.token';
+
+/** Токен входа в рамках вкладки. */
+export function getGateToken() {
+  try {
+    return window.sessionStorage.getItem(KEY_GATE_TOKEN);
+  } catch {
+    return null;
+  }
+}
+
+/** @param {string} token */
+export function setGateToken(token) {
+  try {
+    window.sessionStorage.setItem(KEY_GATE_TOKEN, token);
+  } catch {
+    /* ignore */
+  }
+}
+
+export function clearGateToken() {
+  try {
+    window.sessionStorage.removeItem(KEY_GATE_TOKEN);
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
+ * Статус gate: включён ли пароль, lockout.
+ * @returns {Promise<{enabled: boolean, locked: boolean, retryAfterSec: number}|null>}
+ */
+export async function fetchGateStatus() {
+  try {
+    const response = await fetch('/api/gate');
+    if (!response.ok) return null;
+    return await response.json();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Проверить сохранённый токен.
+ * @param {string} token
+ * @returns {Promise<boolean>}
+ */
+export async function verifyGateToken(token) {
+  try {
+    const response = await fetch('/api/gate', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ token }),
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Войти по паролю.
+ * @param {string} password
+ * @returns {Promise<{ok: true, token: string}|{ok: false, error: string, message?: string, retryAfterSec?: number}>}
+ */
+export async function unlockGate(password) {
+  try {
+    const response = await fetch('/api/gate', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ password }),
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      return {
+        ok: false,
+        error: body.error || 'error',
+        message: body.message,
+        retryAfterSec: body.retryAfterSec,
+      };
+    }
+    return { ok: true, token: body.token };
+  } catch {
+    return { ok: false, error: 'network', message: 'сервер недоступен' };
+  }
+}

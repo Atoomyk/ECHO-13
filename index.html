@@ -138,6 +138,26 @@
 
     <div class="toast" id="toast" data-ui hidden role="status"></div>
 
+    <!-- Вход по паролю перед меню. -->
+    <div class="site-gate" id="site-gate" data-ui role="dialog" aria-modal="true" aria-label="Вход">
+      <form class="site-gate__frame" id="site-gate-form" autocomplete="off">
+        <p class="site-gate__title">ECHO dual</p>
+        <label class="site-gate__label" for="site-gate-password">ПАРОЛЬ</label>
+        <input
+          class="site-gate__input"
+          id="site-gate-password"
+          name="password"
+          type="password"
+          inputmode="numeric"
+          maxlength="64"
+          required
+          autocomplete="current-password"
+        />
+        <p class="site-gate__error" id="site-gate-error" hidden></p>
+        <button class="btn btn--primary site-gate__submit" type="submit">ВОЙТИ</button>
+      </form>
+    </div>
+
     <!-- Портрет на телефоне: dual рассчитан на ландшафт. -->
     <div class="rotate-gate" id="rotate-gate" data-ui hidden role="dialog" aria-live="polite" aria-label="Поверни телефон">
       <div class="rotate-gate__card">

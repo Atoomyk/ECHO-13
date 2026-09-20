@@ -76,9 +76,11 @@ PULSE_HOST=127.0.0.1
 PULSE_ENV=production
 PULSE_DB_PATH=${DATA_DIR}/pulse.db
 PULSE_ALLOWED_ORIGINS=
+PULSE_SITE_PASSWORD=
 EOF
   chmod 640 "${ENV_DIR}/pulse.env"
   chown root:"${APP_USER}" "${ENV_DIR}/pulse.env"
+  echo "заполните PULSE_SITE_PASSWORD в ${ENV_DIR}/pulse.env" >&2
 fi
 
 echo "==> включаю сервис"

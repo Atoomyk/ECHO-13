@@ -3,6 +3,8 @@
  *
  * Маршруты (все под префиксом /api):
  *   GET  /api/health
+ *   GET  /api/gate                        статус входа / lockout
+ *   POST /api/gate                        пароль → токен или проверка токена
  *   GET  /api/daily                       общий сид дня и пороги сложности
  *   GET  /api/leaderboard?mode=daily&limit=10
  *   POST /api/scores                      сохранить результат
