@@ -6,12 +6,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { Ring, RING_KIND, angleDistance, createRing, normalizeAngle, pickKind, thicknessFor, travelSecondsFor } from '../src/core/ring.js';
+import { Ring, RING_KIND, aimGapAtPlayer, angleDistance, createRing, normalizeAngle, pickKind, thicknessFor, travelSecondsFor } from '../src/core/ring.js';
 import { mulberry32 } from '../src/core/random.js';
 import {
   BASE_ESCAPE_SPEED,
+  CLEAN_WINDOW_RAD,
+  CRUSH_RADIUS,
   DANGER_RADIUS,
   ESCAPE_REMOVE_RADIUS,
+  GAP_AIM_LEAD_SEC,
   GAP_SPAN,
   RING_THICKNESS_FAR,
   RING_THICKNESS_NEAR,
@@ -75,6 +78,59 @@ test('разрыв пропускает точку только внутри с�
   assert.equal(ring.isInGap(Math.PI), false);
   assert.equal(ring.covers(0.5, 0), false);
   assert.equal(ring.covers(0.5, Math.PI), true);
+});
+
+test('окно чистого пролёта шире видимого разрыва', () => {
+  const ring = new Ring({
+    kind: RING_KIND.JAGGED,
+    radius: 0.5,
+    speed: 0.2,
+    gapAngle: 0,
+    spin: 0,
+  });
+
+  const mid = (GAP_SPAN / 2 + CLEAN_WINDOW_RAD) / 2;
+  assert.equal(ring.isInGap(mid), false);
+  assert.equal(ring.isCleanPass(mid), true);
+  assert.equal(ring.isCleanPass(CLEAN_WINDOW_RAD + 0.01), false);
+});
+
+test('aimGapAtPlayer ставит разрыв к подлёту, а не сразу на игрока', () => {
+  const speed = SPAWN_RADIUS / 3;
+  const spin = 1.1;
+  const aimed = aimGapAtPlayer(SPAWN_RADIUS, speed, spin, 0, GAP_AIM_LEAD_SEC);
+
+  assert.ok(angleDistance(aimed, 0) > GAP_SPAN / 2, 'на старте разрыв не смотрит в игрока');
+
+  const eta = SPAWN_RADIUS / speed;
+  const atLead = normalizeAngle(aimed + spin * (eta - GAP_AIM_LEAD_SEC));
+  assert.ok(angleDistance(atLead, 0) < 1e-6, 'за lead до центра разрыв смотрит в игрока');
+});
+
+test('наведённое кольцо часто даёт чистый пролёт у центра', () => {
+  let cleans = 0;
+  let total = 0;
+  for (let i = 0; i < 24; i += 1) {
+    const ring = createRing({
+      random: mulberry32(`aim-${i}`),
+      index: i,
+      elapsedSec: 95,
+      speedScale: 1,
+      profile: PROFILE,
+    });
+    if (ring.gapAngle === null) continue;
+    total += 1;
+
+    let guard = 0;
+    while (ring.radius > CRUSH_RADIUS && guard < 20_000) {
+      ring.update(1 / 120);
+      guard += 1;
+    }
+    if (ring.isCleanPass(0)) cleans += 1;
+  }
+
+  assert.ok(total > 0);
+  assert.ok(cleans >= Math.floor(total * 0.4), `ожидали частые чистые пролёты, получили ${cleans}/${total}`);
 });
 
 test('разрыв вращается вместе с кольцом', () => {

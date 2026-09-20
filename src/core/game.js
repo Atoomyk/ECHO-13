@@ -14,13 +14,15 @@ import {
   MAX_FRAME_SEC,
   PLAYER_RADIUS,
   PULSE_REACH,
+  SPAWN_INTERVAL_JITTER_MAX,
+  SPAWN_INTERVAL_JITTER_MIN,
   SPAWN_INTERVAL_MIN_SEC,
   SPAWN_INTERVAL_START_SEC,
   SPAWN_INTERVAL_STEP_SEC,
 } from './constants.js';
 import { Player } from './player.js';
 import { createRing, RING_KIND } from './ring.js';
-import { dayIndex, mulberry32 } from './random.js';
+import { dayIndex, mulberry32, rangeBetween } from './random.js';
 
 /** Фиксированный шаг симуляции: 120 Гц — с запасом к 60 FPS на телефонах. */
 export const STEP_SEC = 1 / 120;
@@ -96,6 +98,18 @@ export class PulseGame {
   get spawnIntervalSec() {
     const reduced = SPAWN_INTERVAL_START_SEC - Math.floor(this.elapsedSec / 20) * SPAWN_INTERVAL_STEP_SEC;
     return Math.max(SPAWN_INTERVAL_MIN_SEC, reduced);
+  }
+
+  /**
+   * Пауза до следующего спавна: база × разброс от сида.
+   * Так волны идут не метрономом, а сериями с передышками.
+   * @returns {number}
+   */
+  rollSpawnDelay() {
+    const factor = rangeBetween(this.random, SPAWN_INTERVAL_JITTER_MIN, SPAWN_INTERVAL_JITTER_MAX);
+    // Ниже половины минимума не опускаемся: иначе кольца слипаются на входе.
+    const floor = SPAWN_INTERVAL_MIN_SEC * 0.55;
+    return Math.max(floor, this.spawnIntervalSec * factor);
   }
 
   /** Общий ускоритель: каждые 30 секунд кольца приходят на 10% быстрее. */
@@ -229,7 +243,7 @@ export class PulseGame {
     this.nextSpawnSec -= dt;
     if (this.nextSpawnSec <= 0) {
       this.spawn();
-      this.nextSpawnSec = this.spawnIntervalSec;
+      this.nextSpawnSec = this.rollSpawnDelay();
     }
 
     this.resolveContacts();
@@ -284,7 +298,7 @@ export class PulseGame {
       if (ring.radius > CRUSH_RADIUS) continue;
 
       ring.resolved = true;
-      const throughGap = ring.isInGap(PLAYER_ANGLE);
+      const throughGap = ring.isCleanPass(PLAYER_ANGLE);
       const result = this.player.resolvePass(throughGap);
 
       if (result === 'clean') {
@@ -322,7 +336,7 @@ export class PulseGame {
     for (const ring of this.rings) {
       if (ring.gapAngle === null) continue;
       if (ring.radius > PULSE_REACH * 1.5) continue;
-      return ring.isInGap(PLAYER_ANGLE);
+      return ring.isCleanPass(PLAYER_ANGLE);
     }
     return false;
   }

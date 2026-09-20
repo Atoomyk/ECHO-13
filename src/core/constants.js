@@ -6,7 +6,7 @@
  */
 
 /** Номер версии правил. Меняется при правке баланса или формата сида. */
-export const RULES_VERSION = 1;
+export const RULES_VERSION = 2;
 
 /** Единица игрового поля. Мир — квадрат [-1, 1] по обеим осям, центр (0, 0). */
 export const WORLD_RADIUS = 1;
@@ -67,22 +67,25 @@ export const MIN_RING_GAP = 0.22;
 export const SPAWN_RADIUS = 1.5;
 
 /** Время между появлениями колец: в секундах с началом и полом сложности. */
-export const SPAWN_INTERVAL_START_SEC = 2.1;
+export const SPAWN_INTERVAL_START_SEC = 1.45;
 /**
  * Предел плотности волн. Согласован с окном реакции: игрок обязан успевать
  * отбивать каждое кольцо, но запас времени при этом остаётся небольшим.
  */
-export const SPAWN_INTERVAL_MIN_SEC = 1.15;
+export const SPAWN_INTERVAL_MIN_SEC = 0.9;
 export const SPAWN_INTERVAL_STEP_SEC = 0.1;
+/** Множитель паузы до следующего кольца: от короткой серии до передышки. */
+export const SPAWN_INTERVAL_JITTER_MIN = 0.5;
+export const SPAWN_INTERVAL_JITTER_MAX = 1.65;
 
 /**
  * Путь кольца от спавна до центра: в секундах, старт, пол и шаг.
  * Пол выведен из окна реакции: кольцо обязано проходить зону импульса
  * не быстрее, чем игрок способен на неё отреагировать.
  */
-export const TRAVEL_START_SEC = 3.6;
-export const TRAVEL_MIN_SEC = 1.35;
-export const TRAVEL_STEP_SEC = 0.18;
+export const TRAVEL_START_SEC = 2.8;
+export const TRAVEL_MIN_SEC = 1.25;
+export const TRAVEL_STEP_SEC = 0.16;
 
 /** Толщина кольца по радиусу: базовая и максимальная у центра (визуальный сигнал). */
 export const RING_THICKNESS_FAR = 0.004;
@@ -94,8 +97,8 @@ export const DANGER_RADIUS = 0.6;
 /** Размер и вращение разрыва у рваного кольца (радианы). */
 export const GAP_SPAN = 0.26;
 export const GAP_SPIN_PER_SEC = 1.1;
-/** Прицельный разрыв: за столько секунд до подлёта окно наводится на центр. */
-export const GAP_AIM_LEAD_SEC = 0.42;
+/** Прицельный разрыв: совпадает с игроком чуть раньше центра (сек до crush). */
+export const GAP_AIM_LEAD_SEC = 0.15;
 
 /** Окно «чистого уклонения»: разрыв должен стоять у центра при входе в DANGER_RADIUS. */
 export const CLEAN_WINDOW_RAD = 0.34;

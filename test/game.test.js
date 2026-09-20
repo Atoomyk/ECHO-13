@@ -337,6 +337,10 @@ test('время и счёт считаются с учётом множител
   const game = new PulseGame({ seed: 'score' });
   game.start();
 
+  // Убираем кольца: тест про множитель счёта, а не про столкновения.
+  game.rings = [];
+  game.nextSpawnSec = 999;
+
   run(game, 2);
   const withBase = game.score;
   assert.ok(Math.abs(withBase - 2 * SCORE_PER_SEC) < 2);
@@ -382,6 +386,24 @@ test('интервал спавна не падает ниже предела', 
   game.player.elapsedSec = 10_000;
   assert.ok(game.spawnIntervalSec >= 0.6);
   assert.ok(game.spawnIntervalSec > 0);
+});
+
+test('паузы между спавнами и скорости подлёта не одинаковые', () => {
+  const game = new PulseGame({ seed: 'uneven-pace' });
+  game.start();
+
+  const delays = Array.from({ length: 12 }, () => Number(game.rollSpawnDelay().toFixed(4)));
+  const uniqueDelays = new Set(delays);
+  assert.ok(uniqueDelays.size >= 4, `паузы слишком ровные: ${[...uniqueDelays].join(', ')}`);
+
+  game.rings = [];
+  const speeds = [];
+  for (let i = 0; i < 10; i += 1) {
+    game.spawn();
+    speeds.push(Number(game.rings.at(-1).speed.toFixed(5)));
+  }
+  const uniqueSpeeds = new Set(speeds);
+  assert.ok(uniqueSpeeds.size >= 4, `скорости подлёта слишком ровные: ${[...uniqueSpeeds].join(', ')}`);
 });
 
 test('кольца появляются сами и всегда за пределами экрана', () => {

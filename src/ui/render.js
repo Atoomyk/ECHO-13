@@ -273,7 +273,7 @@ export class Renderer {
       ctx.lineCap = 'round';
       ctx.globalAlpha = fade;
 
-      this.drawRingGlow(ctx, screenRadius, thickness, fg, fade);
+      this.drawRingGlow(ctx, ring, screenRadius, thickness, fg, fade);
       ctx.globalAlpha = fade;
       this.drawRingBody(ctx, ring, screenRadius, thickness, fg);
 
@@ -288,25 +288,19 @@ export class Renderer {
 
   /**
    * Мягкое свечение кольца: три расширяющихся прохода с падающей альфой.
-   * Свечение рисуется только у колец на подлёте: у близких к центру оно
-   * сливалось в белое пятно и скрывало точку игрока.
+   * Свечение повторяет разрыв — иначе дырка заливается и «пропадает».
    */
-  drawRingGlow(ctx, screenRadius, thickness, fg, fade) {
+  drawRingGlow(ctx, ring, screenRadius, thickness, fg, fade) {
     for (let pass = 3; pass >= 1; pass -= 1) {
       ctx.globalAlpha = 0.045 * pass * fade;
       ctx.lineWidth = thickness * (1 + pass * 1.6);
-      ctx.beginPath();
-      ctx.arc(this.cx, this.cy, screenRadius, 0, Math.PI * 2);
-      ctx.stroke();
+      this.strokeRingPath(ctx, ring, screenRadius);
     }
     ctx.globalAlpha = fade;
   }
 
-  /** Основная линия кольца с учётом разрыва. */
-  drawRingBody(ctx, ring, screenRadius, thickness, fg) {
-    ctx.lineWidth = thickness;
-    ctx.globalAlpha = 1;
-
+  /** Обвести кольцо с учётом разрыва (или полный круг, если разрыва нет). */
+  strokeRingPath(ctx, ring, screenRadius) {
     if (ring.gapAngle === null) {
       ctx.beginPath();
       ctx.arc(this.cx, this.cy, screenRadius, 0, Math.PI * 2);
@@ -314,13 +308,11 @@ export class Renderer {
       return;
     }
 
-    // Рисуем кольцо сегментами, пропуская сектор разрыва.
     const step = ARC_STEP_RAD;
     ctx.beginPath();
     let drawing = false;
 
     for (let angle = 0; angle <= Math.PI * 2 + step; angle += step) {
-      // Снимок состояния — плоские данные, поэтому разрыв считаем по углу здесь же.
       const inGap = angleDistance(angle, ring.gapAngle) <= GAP_SPAN / 2;
       const x = this.cx + Math.cos(angle) * screenRadius;
       const y = this.cy + Math.sin(angle) * screenRadius;
@@ -337,9 +329,17 @@ export class Renderer {
       }
     }
     ctx.stroke();
+  }
 
-    // Края разрыва подсвечиваем: видно, куда наводить разрыв на подлёте.
-    this.drawGapEdges(ctx, ring, screenRadius, thickness, fg);
+  /** Основная линия кольца с учётом разрыва. */
+  drawRingBody(ctx, ring, screenRadius, thickness, fg) {
+    ctx.lineWidth = thickness;
+    ctx.globalAlpha = 1;
+    this.strokeRingPath(ctx, ring, screenRadius);
+
+    if (ring.gapAngle !== null) {
+      this.drawGapEdges(ctx, ring, screenRadius, thickness, fg);
+    }
 
     if (ring.kind === RING_KIND.MAGNET && ring.pulling) {
       this.drawMagnetHint(ctx, screenRadius, thickness, fg);
@@ -348,7 +348,7 @@ export class Renderer {
 
   /** Яркие кончики у края разрыва — ориентир для «дырка = тайминг». */
   drawGapEdges(ctx, ring, screenRadius, thickness, fg) {
-    const half = 0.13;
+    const half = GAP_SPAN / 2;
     ctx.save();
     ctx.globalAlpha = 0.9;
     ctx.lineWidth = thickness * 1.4;
@@ -466,6 +466,16 @@ export class Renderer {
     ctx.beginPath();
     ctx.arc(this.cx, this.cy, base, 0, Math.PI * 2);
     ctx.fill();
+
+    // Разрыв смотрит в центр: тонкое кольцо-подсказка «можно не жать».
+    if (state.gapAligned && !this.reducedMotion) {
+      ctx.globalAlpha = alpha * 0.7;
+      ctx.strokeStyle = PULSE_TINT_COLOR;
+      ctx.lineWidth = Math.max(1, 1.5 * this.dpr);
+      ctx.beginPath();
+      ctx.arc(this.cx, this.cy, base * 1.85, 0, Math.PI * 2);
+      ctx.stroke();
+    }
 
     // Кольцо прицела при высокой точности: маленькая метка внутри точки.
     if (state.multiplier >= 2 && !this.reducedMotion) {

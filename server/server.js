@@ -18,13 +18,14 @@ import {
   sanitizeText,
   validateScore,
 } from './app.js';
-import { loadConfig } from './config.js';
+import { loadConfig, applyEnvFile } from './config.js';
 import { serveStatic } from './static.js';
 import { makeEntry, openStore } from './store.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(here, '..');
 
+applyEnvFile(path.join(projectRoot, '.env'));
 const config = loadConfig();
 
 /**

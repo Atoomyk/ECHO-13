@@ -8,7 +8,9 @@
 
 import {
   BASE_ESCAPE_SPEED,
+  CLEAN_WINDOW_RAD,
   DANGER_RADIUS,
+  GAP_AIM_LEAD_SEC,
   GAP_SPAN,
   GAP_SPIN_PER_SEC,
   RING_THICKNESS_FAR,
@@ -129,13 +131,23 @@ export class Ring {
   }
 
   /**
-   * Попадает ли угол в разрыв.
+   * Попадает ли угол в видимый разрыв кольца.
    * @param {number} angle
    * @returns {boolean}
    */
   isInGap(angle) {
     if (this.gapAngle === null) return false;
     return angleDistance(angle, this.gapAngle) <= GAP_SPAN / 2;
+  }
+
+  /**
+   * Чистый пролёт: разрыв у игрока в более широком окне, чем видимая щель.
+   * @param {number} angle
+   * @returns {boolean}
+   */
+  isCleanPass(angle) {
+    if (this.gapAngle === null) return false;
+    return angleDistance(angle, this.gapAngle) <= CLEAN_WINDOW_RAD;
   }
 
   /**
@@ -207,22 +219,22 @@ export function pickKind(elapsedSec, profile) {
 }
 
 /**
- * Преобразовать прицельный угол кольца в разрыв, который придёт в центр.
+ * Навести разрыв так, чтобы за `leadSec` до центра он смотрел на игрока.
  *
- * Разрыв кружится вместе с кольцом, поэтому наводим его так, чтобы через
- * `leadSec` секунд он оказался напротив игрока.
+ * К моменту crush разрыв ещё чуть проворачивается, но остаётся в CLEAN_WINDOW
+ * при типичном spin — чистое уклонение читается глазом, а не выпадает лотереей.
  *
  * @param {number} radius текущий радиус
  * @param {number} speed скорость сближения
  * @param {number} spin угловая скорость разрыва
  * @param {number} playerAngle угол игрока
- * @param {number} leadSec окно наведения
- * @returns {number} целевой угол разрыва
+ * @param {number} leadSec насколько раньше центра совмещаем разрыв
+ * @returns {number} стартовый угол разрыва
  */
 export function aimGapAtPlayer(radius, speed, spin, playerAngle, leadSec) {
   const eta = radius / Math.max(0.0001, speed);
-  const lead = Math.min(eta, leadSec);
-  return normalizeAngle(playerAngle - lead * spin);
+  const early = Math.min(Math.max(0, leadSec), eta);
+  return normalizeAngle(playerAngle - (eta - early) * spin);
 }
 
 /**
@@ -240,11 +252,10 @@ export function aimGapAtPlayer(radius, speed, spin, playerAngle, leadSec) {
  * @returns {Ring}
  */
 export function createRing({ random, index, elapsedSec, speedScale, profile }) {
-  // Скорость кольца колеблется вокруг общего расписания: ±12% от сида.
-  // Без этого разброса все партии одного сида проходили бы одинаково,
-  // и ежедневный челлендж не отличался бы день ото дня.
+  // Скорость кольца сильно плавает вокруг расписания: ±30% от сида.
+  // Без этого разброса кольца подъезжали бы ровной колонной.
   const baseTravel = travelSecondsFor(index) / Math.max(0.2, speedScale);
-  const jitter = 0.88 + random() * 0.24;
+  const jitter = rangeBetween(random, 0.7, 1.3);
   const travel = baseTravel * jitter;
   const speed = SPAWN_RADIUS / travel;
   const kind = pickKind(elapsedSec, profile);
@@ -253,11 +264,14 @@ export function createRing({ random, index, elapsedSec, speedScale, profile }) {
   const spinDir = random() < 0.5 ? -1 : 1;
   const spin = hasGap ? rangeBetween(random, 0.7, 1.4) * GAP_SPIN_PER_SEC * spinDir : 0;
 
-  // Разрыв рождается вдали от игрока, иначе кольцо влетало бы в центр уже открытым,
-  // и первый удар можно было бы не отрабатывать вовсе. Смещение откладывается
-  // от направления, противоположного игроку, поэтому знак вращения на него не влияет.
-  const offset = 0.6 + random() * 1.9;
-  const gapAngle = hasGap ? normalizeAngle(Math.PI + offset * spinDir) : null;
+  // Разрыв наводим на подлёт: на старте он не смотрит в игрока, а к зоне
+  // опасности выходит в читаемое окно. Небольшой дрожащий сдвиг — чтобы
+  // «всегда не жать» не было бесплатной стратегией.
+  const aim = hasGap
+    ? aimGapAtPlayer(SPAWN_RADIUS, speed, spin, 0, GAP_AIM_LEAD_SEC)
+    : null;
+  const aimJitter = hasGap ? rangeBetween(random, -0.1, 0.1) : 0;
+  const gapAngle = aim === null ? null : normalizeAngle(aim + aimJitter);
 
   return new Ring({
     kind,
